@@ -20,6 +20,10 @@ function apiUrl(path) {
   return `${getApiBase()}${normalizedPath}`;
 }
 
+function hasConfiguredBackend() {
+  return Boolean((window.LH_API_BASE || '').trim());
+}
+
 const elements = {
   totalRevenue: document.getElementById('totalRevenue'),
   totalOrders: document.getElementById('totalOrders'),
@@ -145,6 +149,10 @@ function renderOrders(orders) {
 
 async function loadDashboard() {
   try {
+    if (window.location.hostname.includes('github.io') && !hasConfiguredBackend()) {
+      throw new Error('The admin console is not connected to the live backend. Set window.LH_API_BASE to the deployed API URL.');
+    }
+
     const [summaryResponse, ordersResponse] = await Promise.all([
       fetch(apiUrl('/api/admin/summary'), { cache: 'no-store' }),
       fetch(apiUrl('/api/orders'), { cache: 'no-store' })
