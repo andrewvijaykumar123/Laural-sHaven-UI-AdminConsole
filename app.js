@@ -403,6 +403,7 @@
     if (name === 'analytics') renderAnalytics();
     if (name === 'history') renderHistory();
     history.replaceState(null, '', `#${name}`);
+    if (started) scrollTo({ top: 0, behavior: 'auto' });
   }
 
   function wireUI() {
