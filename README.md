@@ -1,20 +1,22 @@
-# Laural's Haven Admin Console
+﻿# Laural's Haven - Admin Console
 
-Password protected dashboard for kitchen operations.
+Password-protected kitchen dashboard, hosted on GitHub Pages: https://andrewvijaykumar123.github.io/Laural-sHaven-UI-AdminConsole/
 
-## GitHub Pages deployment
+Features: live kanban board with drag and drop, encrypted order inbox, accept/reject with reasons, payment verification, sales analytics, order history with CSV export, sold-out and open/closed controls, prep-time and announcement banner for the storefront, sound and desktop alerts, ticket printing, 90-minute auto-lock.
 
-This repo is a static site and should be deployed from the `main` branch with GitHub Pages enabled. A Pages workflow is included in `.github/workflows/deploy-pages.yml` so the site is published automatically on each push.
+## Security model
 
-## Shared backend configuration
+The password unlocks private keys stored in `keys.js` in encrypted form (PBKDF2-SHA256, 310k iterations, AES-GCM). Orders are decrypted only in the admin browser. Use a long, unique password.
 
-The storefront and admin console should point to the same live backend API by setting `window.LH_API_BASE` before the app script loads, for example:
+## Rotate the password
 
-```html
-<script>
-  window.LH_API_BASE = 'https://your-shared-api-domain.example';
-</script>
+```powershell
+$env:LH_ADMIN_PASSWORD = 'a long new passphrase'
+node tools/gen-keys.mjs . ..\Laural-sHaven-UI
 ```
 
-If `window.LH_API_BASE` is left blank, the apps fall back to the current origin.
+Commit and push `keys.js` in BOTH repos. Old orders on the relay become unreadable after rotation.
 
+## Deploy
+
+Push to `main`; the GitHub Actions workflow publishes the site. `core.js` is a copy of the storefront's `core.js` and must stay identical.

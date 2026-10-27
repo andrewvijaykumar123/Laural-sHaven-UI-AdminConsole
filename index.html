@@ -1,89 +1,114 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Laural's Haven Admin Console</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20261027-hosted-repo-fix" />
-  </head>
-  <body>
-    <div id="adminAuth" class="admin-auth">
-      <div class="auth-panel">
-        <p class="eyebrow">Admin access</p>
-        <h2>Enter password</h2>
-        <form id="adminLoginForm" class="auth-form">
-          <input id="adminPassword" type="password" placeholder="Password" autocomplete="current-password" required />
-          <button type="submit" class="refresh-button auth-button">Unlock console</button>
-        </form>
-        <p id="authError" class="auth-error" aria-live="polite"></p>
-      </div>
-    </div>
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Laural's Haven | Admin Console</title>
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0b1020">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://ntfy.sh; base-uri 'none'; form-action 'none'">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 
-    <div id="dashboardShell" class="dashboard-shell hidden-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Operations hub</p>
-          <h1>Laural's Haven</h1>
-        </div>
-        <div class="topbar-actions">
-          <span class="live-pill">Live kitchen</span>
-          <button id="refreshButton" class="refresh-button" type="button">Refresh board</button>
+  <section class="lock" id="lock">
+    <form class="lock-card" id="loginForm" autocomplete="off">
+      <div class="lock-ico">🔐</div>
+      <h1>Laural's <b>Haven</b></h1>
+      <p>Admin Console · kitchen operations</p>
+      <label class="pw"><input id="pw" type="password" placeholder="Admin password" autocomplete="current-password" required><button type="button" id="pwToggle" aria-label="Show password">👁</button></label>
+      <div class="lock-msg" id="lockMsg" role="alert"></div>
+      <button class="btn primary" id="loginBtn" type="submit">Unlock console</button>
+      <small>Your password never leaves this device. It unlocks the keys that decrypt customer orders.</small>
+    </form>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <aside class="side" id="side">
+      <div class="logo"><span>🍃</span><b>Haven</b><small>Admin</small></div>
+      <nav id="nav">
+        <button data-tab="orders" class="on"><i>📋</i><span>Live orders</span><em id="navCount" hidden>0</em></button>
+        <button data-tab="analytics"><i>📊</i><span>Analytics</span></button>
+        <button data-tab="menu"><i>🍽️</i><span>Menu &amp; stock</span></button>
+        <button data-tab="history"><i>🗂️</i><span>Order history</span></button>
+        <button data-tab="settings"><i>⚙️</i><span>Settings</span></button>
+      </nav>
+      <div class="side-foot"><span class="live-pill" id="livePill"><i></i><span>Connecting</span></span><button class="link" id="lockBtn">🔒 Lock console</button></div>
+    </aside>
+
+    <div class="main">
+      <header class="bar">
+        <div><h2 id="tabTitle">Live orders</h2><p id="tabSub">Real-time kitchen board</p></div>
+        <div class="bar-actions">
+          <label class="switch big" title="Accept new orders"><input type="checkbox" id="openToggle"><span class="track"></span><span class="lbl" id="openLbl">Open</span></label>
+          <button class="icon-btn" id="soundBtn" title="Toggle alert sound" aria-label="Toggle alert sound">🔔</button>
+          <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌗</button>
+          <button class="icon-btn" id="lockBtn2" title="Lock console" aria-label="Lock console">🔒</button>
         </div>
       </header>
 
-      <main class="main-grid">
-        <section class="stats-grid">
-          <article class="stat-card revenue">
-            <span>Total revenue</span>
-            <strong id="totalRevenue">₹0</strong>
-          </article>
-          <article class="stat-card">
-            <span>Orders today</span>
-            <strong id="totalOrders">0</strong>
-          </article>
-          <article class="stat-card warning">
-            <span>Pending</span>
-            <strong id="pendingOrders">0</strong>
-          </article>
-          <article class="stat-card success">
-            <span>Delivered</span>
-            <strong id="deliveredOrders">0</strong>
-          </article>
-        </section>
+      <section class="tab on" id="tab-orders">
+        <div class="kpis" id="kpis"></div>
+        <div class="board" id="board"></div>
+      </section>
 
-        <section class="panel panel-wide">
-          <div class="panel-header">
-            <div>
-              <p>Restaurant flow</p>
-              <h2>Live order queue</h2>
-            </div>
-          </div>
-          <div class="status-filter-bar">
-            <div id="orderStatusFilters" class="status-filters" aria-label="Order status filters"></div>
-          </div>
-          <div id="ordersTable" class="orders-table" aria-live="polite"></div>
-        </section>
+      <section class="tab" id="tab-analytics">
+        <div class="kpis" id="aKpis"></div>
+        <div class="panels">
+          <div class="panel wide"><h3>Orders by hour</h3><div class="bars" id="hourChart"></div></div>
+          <div class="panel"><h3>Top sellers</h3><div id="topItems"></div></div>
+          <div class="panel"><h3>Revenue by category</h3><div id="catSplit"></div></div>
+          <div class="panel"><h3>Status mix</h3><div id="statusMix"></div></div>
+          <div class="panel"><h3>Service &amp; payment</h3><div id="svcMix"></div></div>
+        </div>
+      </section>
 
-        <section class="panel report-panel">
-          <div class="panel-header">
-            <div>
-              <p>Performance</p>
-              <h2>Best sellers</h2>
-            </div>
-          </div>
-          <ul id="popularItems" class="popular-items"></ul>
-        </section>
-      </main>
+      <section class="tab" id="tab-menu">
+        <div class="panel cfg-panel">
+          <div class="cfg-row"><div><h3>Prep time</h3><p>Shown to customers as the average wait.</p></div>
+            <div class="stepper"><button id="prepDec" aria-label="Decrease">−</button><b id="prepVal">12</b><span>min</span><button id="prepInc" aria-label="Increase">+</button></div></div>
+          <div class="cfg-row"><div><h3>Storefront announcement</h3><p>A banner on the ordering page (offers, delays...).</p></div>
+            <input id="noteInput" maxlength="120" placeholder="e.g. Free dessert on orders above ₹500"></div>
+        </div>
+        <div class="toolbar"><label class="search"><span>🔍</span><input id="menuSearch" placeholder="Search items..." type="search"></label>
+          <span class="muted" id="oosCount"></span><button class="btn ghost sm" id="restockAll">Restock everything</button></div>
+        <div id="menuAdmin"></div>
+      </section>
+
+      <section class="tab" id="tab-history">
+        <div class="toolbar"><label class="search"><span>🔍</span><input id="histSearch" placeholder="Search by order ID, name or phone..." type="search"></label>
+          <select id="histStatus" aria-label="Filter by status"><option value="">All statuses</option></select>
+          <button class="btn ghost sm" id="exportCsv">⬇ Export CSV</button></div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Order</th><th>Time</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead><tbody id="histBody"></tbody></table></div>
+      </section>
+
+      <section class="tab" id="tab-settings">
+        <div class="panels">
+          <div class="panel"><h3>Alerts</h3>
+            <div class="cfg-row"><div><h4>Sound</h4><p>Play a chime on new orders.</p></div><label class="switch"><input type="checkbox" id="soundToggle"><span class="track"></span></label></div>
+            <div class="cfg-row"><div><h4>Desktop notifications</h4><p>Pop-ups when the tab is in the background.</p></div><button class="btn ghost sm" id="notifyBtn">Enable</button></div>
+            <button class="btn ghost sm" id="testSound">Play test chime</button></div>
+          <div class="panel"><h3>Connection</h3><div id="connInfo"></div><button class="btn ghost sm" id="retrySend">Retry sending now</button></div>
+          <div class="panel"><h3>Data</h3><p class="muted">Orders are stored on this device only. The relay keeps encrypted messages for about 12 hours.</p>
+            <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
+            <button class="btn danger sm" id="clearBoard">Clear board for everyone</button></div></div>
+          <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are encrypted end to end (RSA-OAEP + AES-GCM).</li><li>Status changes are digitally signed (ECDSA P-256).</li><li>Session auto-locks after 90 minutes.</li><li>To rotate the password, re-run <code>tools/gen-keys.mjs</code> and redeploy both sites.</li></ul></div>
+        </div>
+      </section>
     </div>
+  </div>
 
-    </div>
+  <div id="printArea"></div>
+  <div class="modal" id="modal" hidden role="dialog" aria-modal="true"><div class="modal-card" id="modalCard"></div></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
-    <script>
-      window.LH_API_BASE = 'https://laurals-haven-api.onrender.com';
-    </script>
-    <script src="./app.js?v=20261027-full-menu"></script>
-  </body>
+  <script src="keys.js"></script>
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
 </html>
