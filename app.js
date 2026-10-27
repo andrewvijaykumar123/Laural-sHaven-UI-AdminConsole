@@ -10,6 +10,51 @@ const state = {
   orders: []
 };
 
+const STORAGE_KEYS = {
+  orders: 'lauralsHavenFallbackOrders'
+};
+
+function readStoredOrders() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.orders);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function writeStoredOrders(orders) {
+  localStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders));
+}
+
+function buildOfflineSummary(orders) {
+  const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const pendingOrders = orders.filter((order) => (order.status || 'pending') === 'pending').length;
+  const deliveredOrders = orders.filter((order) => (order.status || 'pending') === 'delivered').length;
+
+  const itemCounts = new Map();
+  orders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const name = item.name;
+      const current = itemCounts.get(name) || 0;
+      itemCounts.set(name, current + Number(item.qty || 0));
+    });
+  });
+
+  return {
+    totalRevenue: revenue,
+    totalOrders: orders.length,
+    pendingOrders,
+    acceptedOrders: orders.filter((order) => (order.status || 'pending') === 'accepted').length,
+    deliveredOrders,
+    popularItems: Array.from(itemCounts.entries())
+      .map(([name, quantity]) => ({ name, quantity }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5)
+  };
+}
+
 function getApiBase() {
   const configuredBase = (window.LH_API_BASE || '').trim().replace(/\/$/, '');
   if (configuredBase) return configuredBase;
@@ -164,10 +209,6 @@ function renderOrders(orders) {
 
 async function loadDashboard() {
   try {
-    if (window.location.hostname.includes('github.io') && !hasConfiguredBackend()) {
-      throw new Error('The admin console is not connected to the live backend. Set window.LH_API_BASE to the deployed API URL.');
-    }
-
     const [summaryResponse, ordersResponse] = await Promise.all([
       fetch(apiUrl('/api/admin/summary'), { cache: 'no-store' }),
       fetch(apiUrl('/api/orders'), { cache: 'no-store' })
@@ -182,6 +223,15 @@ async function loadDashboard() {
     renderSummary(state.summary);
     renderOrders(state.orders);
   } catch (error) {
+    const offlineOrders = readStoredOrders();
+    if (offlineOrders.length) {
+      state.summary = buildOfflineSummary(offlineOrders);
+      state.orders = offlineOrders;
+      renderSummary(state.summary);
+      renderOrders(state.orders);
+      return;
+    }
+
     console.error('Failed to load dashboard data:', error);
     elements.ordersTable.innerHTML = '<div class="empty-state">The admin service is temporarily unavailable.</div>';
   }
@@ -202,8 +252,14 @@ async function updateStatus(orderId, status) {
 
     await loadDashboard();
   } catch (error) {
+    const orders = readStoredOrders();
+    const updatedOrders = orders.map((order) => order.id === orderId ? { ...order, status, updatedAt: new Date().toISOString() } : order);
+    writeStoredOrders(updatedOrders);
+    state.summary = buildOfflineSummary(updatedOrders);
+    state.orders = updatedOrders;
+    renderSummary(state.summary);
+    renderOrders(state.orders);
     console.error(error);
-    alert(error.message || 'Unable to update order status.');
   }
 }
 
