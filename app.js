@@ -12,11 +12,28 @@ const state = {
   filterStatus: 'all'
 };
 
+const FALLBACK_DASHBOARD = {
+  summary: {
+    totalRevenue: 0,
+    totalOrders: 0,
+    pendingOrders: 0,
+    deliveredOrders: 0,
+    popularItems: []
+  },
+  orders: []
+};
+
 async function fetchJsonWithRetry(path, options = {}, retries = 3) {
   const fallbackMap = {
     '/api/menu': ['./menu.json'],
     '/api/admin/summary': ['./dashboard.json'],
     '/api/orders': ['./dashboard.json']
+  };
+
+  const builtInFallbacks = {
+    '/api/menu': { upiId: 'paytm.s1pl5v7@pty', upiName: "Laural's Haven", menu: [] },
+    '/api/admin/summary': { summary: FALLBACK_DASHBOARD.summary },
+    '/api/orders': { orders: FALLBACK_DASHBOARD.orders }
   };
 
   let lastError;
@@ -54,8 +71,12 @@ async function fetchJsonWithRetry(path, options = {}, retries = 3) {
             return await fallbackResponse.json();
           }
         } catch (fallbackError) {
-          // Fall through to retry logic below.
+          // Fall through to built-in fallback below.
         }
+      }
+
+      if (builtInFallbacks[path]) {
+        return builtInFallbacks[path];
       }
 
       if (attempt < retries) {
