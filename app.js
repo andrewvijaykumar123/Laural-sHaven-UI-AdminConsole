@@ -8,52 +8,41 @@ const currencyFormatter = new Intl.NumberFormat('en-IN', {
 
 const state = {
   summary: null,
-  orders: []
+  orders: [],
+  filterStatus: 'all'
 };
 
-const STORAGE_KEYS = {
-  orders: 'lauralsHavenFallbackOrders'
-};
+async function fetchJsonWithRetry(path, options = {}, retries = 3) {
+  let lastError;
 
-function readStoredOrders() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.orders);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    return [];
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(apiUrl(path), {
+        cache: 'no-store',
+        ...options
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let parsedError = {};
+        try {
+          parsedError = JSON.parse(errorText);
+        } catch (error) {
+          parsedError = {};
+        }
+        throw new Error(parsedError.message || `Request failed with status ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      }
+    }
   }
-}
 
-function writeStoredOrders(orders) {
-  localStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders));
-}
-
-function buildOfflineSummary(orders) {
-  const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const pendingOrders = orders.filter((order) => (order.status || 'pending') === 'pending').length;
-  const deliveredOrders = orders.filter((order) => (order.status || 'pending') === 'delivered').length;
-
-  const itemCounts = new Map();
-  orders.forEach((order) => {
-    (order.items || []).forEach((item) => {
-      const name = item.name;
-      const current = itemCounts.get(name) || 0;
-      itemCounts.set(name, current + Number(item.qty || 0));
-    });
-  });
-
-  return {
-    totalRevenue: revenue,
-    totalOrders: orders.length,
-    pendingOrders,
-    acceptedOrders: orders.filter((order) => (order.status || 'pending') === 'accepted').length,
-    deliveredOrders,
-    popularItems: Array.from(itemCounts.entries())
-      .map(([name, quantity]) => ({ name, quantity }))
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 5)
-  };
+  throw lastError || new Error('API request failed.');
 }
 
 function getApiBase() {
@@ -92,6 +81,7 @@ const elements = {
   deliveredOrders: document.getElementById('deliveredOrders'),
   ordersTable: document.getElementById('ordersTable'),
   popularItems: document.getElementById('popularItems'),
+  orderStatusFilters: document.getElementById('orderStatusFilters'),
   refreshButton: document.getElementById('refreshButton'),
   adminAuth: document.getElementById('adminAuth'),
   dashboardShell: document.getElementById('dashboardShell'),
@@ -180,13 +170,34 @@ function renderSummary(summary) {
     .join('');
 }
 
+function renderStatusFilters() {
+  if (!elements.orderStatusFilters) return;
+
+  const options = ['all', 'pending', 'accepted', 'ready', 'delivered'];
+  elements.orderStatusFilters.innerHTML = options
+    .map((status) => {
+      const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
+      const active = state.filterStatus === status ? 'active' : '';
+      return `<button type="button" class="filter-pill ${active}" data-status-filter="${status}">${label}</button>`;
+    })
+    .join('');
+}
+
+function getVisibleOrders() {
+  if (!Array.isArray(state.orders)) return [];
+  if (state.filterStatus === 'all') return state.orders;
+  return state.orders.filter((order) => (order.status || 'pending') === state.filterStatus);
+}
+
 function renderOrders(orders) {
-  if (!Array.isArray(orders) || !orders.length) {
-    elements.ordersTable.innerHTML = '<div class="empty-state">No orders have been placed yet.</div>';
+  const visibleOrders = getVisibleOrders();
+
+  if (!Array.isArray(visibleOrders) || !visibleOrders.length) {
+    elements.ordersTable.innerHTML = '<div class="empty-state">No orders match this view.</div>';
     return;
   }
 
-  elements.ordersTable.innerHTML = orders
+  elements.ordersTable.innerHTML = visibleOrders
     .map((order) => {
       const status = order.status || 'pending';
       const itemList = Array.isArray(order.items) ? order.items.map((item) => `${item.name} × ${item.qty}`).join(', ') : 'No items';
@@ -229,61 +240,48 @@ function renderOrders(orders) {
 
 async function loadDashboard() {
   try {
-    const [summaryResponse, ordersResponse] = await Promise.all([
-      fetch(apiUrl('/api/admin/summary'), { cache: 'no-store' }),
-      fetch(apiUrl('/api/orders'), { cache: 'no-store' })
+    const [summaryData, ordersData] = await Promise.all([
+      fetchJsonWithRetry('/api/admin/summary'),
+      fetchJsonWithRetry('/api/orders')
     ]);
-
-    const summaryData = await summaryResponse.json();
-    const ordersData = await ordersResponse.json();
 
     state.summary = summaryData.summary || {};
     state.orders = Array.isArray(ordersData.orders) ? ordersData.orders : [];
 
     renderSummary(state.summary);
+    renderStatusFilters();
     renderOrders(state.orders);
   } catch (error) {
-    const offlineOrders = readStoredOrders();
-    if (offlineOrders.length) {
-      state.summary = buildOfflineSummary(offlineOrders);
-      state.orders = offlineOrders;
-      renderSummary(state.summary);
-      renderOrders(state.orders);
-      return;
-    }
-
     console.error('Failed to load dashboard data:', error);
-    elements.ordersTable.innerHTML = '<div class="empty-state">The admin service is temporarily unavailable.</div>';
+    elements.ordersTable.innerHTML = '<div class="empty-state">The admin service is temporarily unavailable. Please try again shortly.</div>';
+    elements.popularItems.innerHTML = '<li class="empty-state">Live data is currently unavailable.</li>';
   }
 }
 
 async function updateStatus(orderId, status) {
   try {
-    const response = await fetch(apiUrl(`/api/orders/${orderId}/status`), {
+    await fetchJsonWithRetry(`/api/orders/${orderId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
 
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.message || 'Failed to update order status.');
-    }
-
     await loadDashboard();
   } catch (error) {
-    const orders = readStoredOrders();
-    const updatedOrders = orders.map((order) => order.id === orderId ? { ...order, status, updatedAt: new Date().toISOString() } : order);
-    writeStoredOrders(updatedOrders);
-    state.summary = buildOfflineSummary(updatedOrders);
-    state.orders = updatedOrders;
-    renderSummary(state.summary);
-    renderOrders(state.orders);
-    console.error(error);
+    console.error('Failed to update order status:', error);
+    elements.ordersTable.innerHTML = '<div class="empty-state">The live order API is currently unavailable. Please retry in a moment.</div>';
   }
 }
 
 document.addEventListener('click', (event) => {
+  const filterButton = event.target.closest('[data-status-filter]');
+  if (filterButton) {
+    state.filterStatus = filterButton.dataset.statusFilter || 'all';
+    renderStatusFilters();
+    renderOrders(state.orders);
+    return;
+  }
+
   const actionButton = event.target.closest('[data-order-id]');
   if (!actionButton) return;
 
