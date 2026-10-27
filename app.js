@@ -1,53 +1,11 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
 const ASSET_VERSION = '20261027-full-menu';
-const API_BASE = window.location && window.location.hostname.includes('github.io') ? '' : 'https://laurals-haven-api.onrender.com';
+const DEFAULT_API_BASE = 'https://laurals-haven-api.onrender.com';
+const HOSTNAME = (window.location && window.location.hostname) || '';
+const API_BASE = HOSTNAME === 'localhost' || HOSTNAME === '127.0.0.1' || HOSTNAME === '' ? 'http://localhost:3000' : DEFAULT_API_BASE;
 window.LH_API_BASE = API_BASE;
 const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 
-function getStoredOrders() {
-  try {
-    return JSON.parse(localStorage.getItem('lauralsHavenPublicOrders') || '[]');
-  } catch (error) {
-    return [];
-  }
-}
-
-function saveStoredOrders(orders) {
-  localStorage.setItem('lauralsHavenPublicOrders', JSON.stringify(orders));
-}
-
-function buildPublicSummary(orders) {
-  const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const pendingOrders = orders.filter((order) => String(order.status || 'pending').toLowerCase() === 'pending').length;
-  const acceptedOrders = orders.filter((order) => String(order.status || 'pending').toLowerCase() === 'accepted').length;
-  const rejectedOrders = orders.filter((order) => String(order.status || 'pending').toLowerCase() === 'rejected').length;
-  const cookingOrders = orders.filter((order) => String(order.status || 'pending').toLowerCase() === 'cooking').length;
-  const completedOrders = orders.filter((order) => String(order.status || 'pending').toLowerCase() === 'completed').length;
-
-  const itemCounts = new Map();
-  orders.forEach((order) => {
-    (order.items || []).forEach((item) => {
-      const key = item.name;
-      const current = itemCounts.get(key) || 0;
-      itemCounts.set(key, current + Number(item.qty || 1));
-    });
-  });
-
-  return {
-    totalRevenue: revenue,
-    totalOrders: orders.length,
-    pendingOrders,
-    acceptedOrders,
-    rejectedOrders,
-    cookingOrders,
-    completedOrders,
-    deliveredOrders: completedOrders,
-    popularItems: Array.from(itemCounts.entries())
-      .map(([name, quantity]) => ({ name, quantity }))
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 5)
-  };
-}
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
   currency: 'INR',
@@ -68,38 +26,6 @@ function normalizeOrderStatus(status) {
 }
 
 async function fetchJsonWithRetry(path, options = {}, retries = 2) {
-  const isGitHubPages = window.location && window.location.hostname.includes('github.io');
-
-  if (isGitHubPages) {
-    if (path === '/api/orders') {
-      return { success: true, orders: getStoredOrders() };
-    }
-
-    if (path === '/api/admin/summary') {
-      return { success: true, summary: buildPublicSummary(getStoredOrders()) };
-    }
-
-    if (path.startsWith('/api/orders/') && options.method === 'PATCH') {
-      const id = path.split('/')[2];
-      const body = JSON.parse(options.body || '{}');
-      const orders = getStoredOrders();
-      const orderIndex = orders.findIndex((entry) => entry.id === id);
-
-      if (orderIndex === -1) {
-        throw new Error('Order not found.');
-      }
-
-      orders[orderIndex].status = String(body.status || 'pending').toLowerCase();
-      orders[orderIndex].updatedAt = new Date().toISOString();
-      saveStoredOrders(orders);
-      return { success: true, order: orders[orderIndex] };
-    }
-
-    if (path === '/api/health') {
-      return { ok: true, service: "Laural's Haven ordering app" };
-    }
-  }
-
   let lastError;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
