@@ -14,17 +14,6 @@ const STORAGE_KEYS = {
   orders: 'lauralsHavenFallbackOrders'
 };
 
-function clearPersistedFallbackState() {
-  try {
-    localStorage.removeItem(STORAGE_KEYS.orders);
-    sessionStorage.removeItem('lauralsHavenAdminPassword');
-  } catch (error) {
-    console.warn('Unable to clear admin fallback state:', error);
-  }
-}
-
-clearPersistedFallbackState();
-
 function readStoredOrders() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.orders);
