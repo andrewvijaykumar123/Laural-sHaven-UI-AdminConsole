@@ -290,33 +290,52 @@
   function connect(name) {
     if (streams[name]) return;
     streams[name] = true;
-    const up = (v) => { if (relayState[name] !== v) { relayState[name] = v; emitRelay(); } };
-    const fail = (e) => { up(false); console.warn(`LH ${name} stream`, e && e.code ? e.code : e); };
-    (async () => {
+    const live = {};
+    const mark = (k, v) => {
+      live[k] = v;
+      const all = Object.values(live).every(Boolean);
+      if (relayState[name] !== all) { relayState[name] = all; emitRelay(); }
+    };
+    const MD = { includeMetadataChanges: true };
+    let delay = 3000, timer = null, offs = [];
+    // Listener errors (rules, network, sign-in not ready) are retried with backoff instead of staying down until a reload.
+    const retry = (k, e) => {
+      mark(k, false);
+      console.warn(`LH ${name} stream`, e && e.code ? e.code : e);
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; offs.splice(0).forEach((f) => { try { f(); } catch (x) { /* already closed */ } }); attach(); }, delay);
+      delay = Math.min(delay * 2, 60000);
+    };
+    const synced = (k, snap) => { const ok = !snap.metadata.fromCache; mark(k, ok); if (ok) delay = 3000; };
+    async function attach() {
       try {
         const FB = window.LH_FB;
         if (name === 'ops') {
-          FB.onSnapshot(FB.doc(firebase().db, 'config', 'store'), (snap) => {
-            up(!snap.metadata.fromCache);
+          mark('cfg', false);
+          offs.push(FB.onSnapshot(FB.doc(firebase().db, 'config', 'store'), MD, (snap) => {
+            synced('cfg', snap);
             if (snap.exists()) applyCfgDoc(snap.data());
-          }, fail);
+          }, (e) => retry('cfg', e)));
           return;
         }
         if (!(await adminUser())) throw new Error('Console is locked');
         const { db } = firebase();
-        FB.onSnapshot(FB.query(FB.collection(db, 'orders'), FB.orderBy('at', 'desc'), FB.limit(500)), (snap) => {
-          up(!snap.metadata.fromCache);
+        mark('orders', false); mark('status', false);
+        offs.push(FB.onSnapshot(FB.query(FB.collection(db, 'orders'), FB.orderBy('at', 'desc'), FB.limit(500)), MD, (snap) => {
+          synced('orders', snap);
           snap.docChanges().forEach((ch) => {
             if (ch.type !== 'added') return;
             const o = fromDoc({ ...ch.doc.data({ serverTimestamps: 'estimate' }), id: ch.doc.id });
             if (o) emit('order', o);
           });
-        }, fail);
-        FB.onSnapshot(FB.query(FB.collection(db, 'status'), FB.where('u', '>', now() - 3 * 86400000)), (snap) => {
+        }, (e) => retry('orders', e)));
+        offs.push(FB.onSnapshot(FB.query(FB.collection(db, 'status'), FB.where('u', '>', now() - 3 * 86400000)), MD, (snap) => {
+          synced('status', snap);
           snap.docChanges().forEach((ch) => { if (ch.type !== 'removed') emitStatus(ch.doc.id, ch.doc.data()); });
-        }, fail);
-      } catch (e) { streams[name] = false; fail(e); }
-    })();
+        }, (e) => retry('status', e)));
+      } catch (e) { retry(name === 'ops' ? 'cfg' : 'orders', e); }
+    }
+    attach();
   }
 
   /* Customers follow the status of their own orders by id (readable by id only, never listable). */
