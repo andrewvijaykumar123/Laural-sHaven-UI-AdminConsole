@@ -12,7 +12,18 @@ const state = {
 
 function getApiBase() {
   const configuredBase = (window.LH_API_BASE || '').trim().replace(/\/$/, '');
-  return configuredBase || window.location.origin;
+  if (configuredBase) return configuredBase;
+
+  const host = (window.location.hostname || '').toLowerCase();
+  if (host.includes('github.io') || host.includes('pages.dev')) {
+    return 'https://laurals-haven-api.onrender.com';
+  }
+
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return 'http://localhost:3000';
+  }
+
+  return window.location.origin;
 }
 
 function apiUrl(path) {
@@ -21,7 +32,11 @@ function apiUrl(path) {
 }
 
 function hasConfiguredBackend() {
-  return Boolean((window.LH_API_BASE || '').trim());
+  const configuredBase = (window.LH_API_BASE || '').trim();
+  if (configuredBase) return true;
+
+  const host = (window.location.hostname || '').toLowerCase();
+  return host.includes('github.io') || host.includes('pages.dev') || host === 'localhost' || host === '127.0.0.1';
 }
 
 const elements = {
