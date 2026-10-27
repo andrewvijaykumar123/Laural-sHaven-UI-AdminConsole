@@ -1,4 +1,5 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
+const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
   currency: 'INR',
@@ -99,8 +100,26 @@ const elements = {
   authError: document.getElementById('authError')
 };
 
+function clearAdminSession() {
+  sessionStorage.removeItem('lauralsHavenAdminPassword');
+  sessionStorage.removeItem('lauralsHavenAdminPasswordExpiresAt');
+}
+
 function isAuthorized() {
-  return sessionStorage.getItem('lauralsHavenAdminPassword') === ADMIN_PASSWORD;
+  const storedPassword = sessionStorage.getItem('lauralsHavenAdminPassword');
+  const expiresAt = Number(sessionStorage.getItem('lauralsHavenAdminPasswordExpiresAt') || 0);
+
+  if (storedPassword !== ADMIN_PASSWORD) {
+    clearAdminSession();
+    return false;
+  }
+
+  if (!expiresAt || Date.now() > expiresAt) {
+    clearAdminSession();
+    return false;
+  }
+
+  return true;
 }
 
 function showAuthScreen(message = '') {
@@ -113,6 +132,7 @@ function showAuthScreen(message = '') {
 
 function unlockAdmin() {
   sessionStorage.setItem('lauralsHavenAdminPassword', ADMIN_PASSWORD);
+  sessionStorage.setItem('lauralsHavenAdminPasswordExpiresAt', String(Date.now() + ADMIN_SESSION_TTL_MS));
   elements.adminAuth.classList.add('hidden-shell');
   elements.dashboardShell.classList.remove('hidden-shell');
 }
@@ -280,7 +300,8 @@ function initializeAdminSession() {
     return;
   }
 
-  showAuthScreen();
+  clearAdminSession();
+  showAuthScreen('Session expired. Please sign in again.');
 }
 
 if (elements.adminLoginForm) {
@@ -303,11 +324,4 @@ initializeAdminSession();
 
 if (elements.refreshButton) {
   elements.refreshButton.addEventListener('click', loadDashboard);
-}
-
-if (!isAuthorized()) {
-  showAuthScreen();
-} else {
-  unlockAdmin();
-  loadDashboard();
 }
