@@ -1,5 +1,5 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
-const ASSET_VERSION = '20261027-integrated-hosts';
+const ASSET_VERSION = '20261027-mock-fallback';
 const API_BASE = (window.LH_API_BASE || (
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:3001'
