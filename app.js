@@ -273,6 +273,16 @@ document.addEventListener('click', (event) => {
   }
 });
 
+function initializeAdminSession() {
+  if (isAuthorized()) {
+    unlockAdmin();
+    loadDashboard();
+    return;
+  }
+
+  showAuthScreen();
+}
+
 if (elements.adminLoginForm) {
   elements.adminLoginForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -288,6 +298,8 @@ if (elements.adminLoginForm) {
     elements.adminPassword.value = '';
   });
 }
+
+initializeAdminSession();
 
 if (elements.refreshButton) {
   elements.refreshButton.addEventListener('click', loadDashboard);
