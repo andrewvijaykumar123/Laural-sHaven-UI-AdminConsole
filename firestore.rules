@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Replace with the email of the admin user created in Firebase Authentication.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'password'
+        && request.auth.token.email == 'REPLACE_WITH_ADMIN_EMAIL';
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validOrder(d, id) {
+      return d.keys().hasOnly(['id', 'n', 'p', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at'])
+        && d.keys().hasAll(['id', 'n', 'p', 'it', 'total', 'pay', 'svc', 'uid', 'at'])
+        && d.id == id
+        && d.uid == request.auth.uid
+        && d.at == request.time
+        && d.n is string && d.n.size() > 0 && d.n.size() <= 40
+        && d.p is string && d.p.size() >= 7 && d.p.size() <= 16
+        && (!('nt' in d) || (d.nt is string && d.nt.size() <= 140))
+        && (!('tbl' in d) || (d.tbl is string && d.tbl.size() <= 8))
+        && d.it is list && d.it.size() >= 1 && d.it.size() <= 60
+        && d.total is int && d.total > 0 && d.total <= 100000
+        && d.pay in ['upi', 'counter']
+        && d.svc in ['dine', 'take'];
+    }
+
+    // Private: only the admin can read orders. Customers can only create them.
+    match /orders/{id} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && id.matches('LH-[A-Z0-9]{6,10}') && validOrder(request.resource.data, id);
+      allow update, delete: if isAdmin();
+    }
+
+    // Public by id only (no listing): lets a customer follow their order without exposing personal data.
+    match /status/{id} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Open/closed, sold-out items, prep time and banner.
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

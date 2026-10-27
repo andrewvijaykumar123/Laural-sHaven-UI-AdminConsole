@@ -1,11 +1,7 @@
-/* Laural's Haven shared core: menu, crypto and the realtime relay layer. Identical in storefront and admin console. */
+/* Laural's Haven shared core: menu and the Firebase realtime layer. Identical in storefront and admin console. */
 (() => {
   'use strict';
 
-  const RELAY = 'https://ntfy.sh';
-  const BASE = 'lh-haven-9d4b7e21c6a05f38';
-  const TOPICS = { orders: `${BASE}-orders`, ops: `${BASE}-ops` };
-  const KEYS = window.LH_KEYS || {};
   const UPI = { id: 'paytm.s1pl5v7@pty', name: "Laural's Haven" };
 
   /* ---------- Menu (source: Laural's Haven - Complete Cafe Menu.pdf, 85 items) ---------- */
@@ -100,16 +96,6 @@
   const randomString = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => ALPHABET[x % ALPHABET.length]).join('');
   const newOrderId = () => `LH-${randomString(6)}`;
   const validId = (id) => typeof id === 'string' && /^LH-[A-Z0-9]{6,10}$/.test(id);
-  const textEnc = new TextEncoder();
-  const textDec = new TextDecoder();
-  const toB64 = (buf) => {
-    const bytes = new Uint8Array(buf);
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(s);
-  };
-  const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-
   /* ---------- App-scoped storage and clock ---------- */
   let prefix = 'lh.';
   const store = {
@@ -124,11 +110,7 @@
     },
     del(key) { try { localStorage.removeItem(prefix + key); } catch (e) { /* storage unavailable */ } }
   };
-  let offset = 0;
-  const now = () => Date.now() + offset;
-  const setOffset = (ms) => {
-    if (Number.isFinite(ms) && Math.abs(ms) < 6 * 3600 * 1000) { offset = ms; store.set('offset', ms); }
-  };
+  const now = () => Date.now();
 
   /* ---------- Tiny event emitter ---------- */
   const handlers = {};
@@ -157,238 +139,215 @@
     const phone = String(o.p ?? '').replace(/[^\d+]/g, '').slice(0, 15);
     if (!name || phone.replace(/\D/g, '').length < 7) return null;
     let ts = Number(o.ts);
-    if (!Number.isFinite(ts) || Math.abs(ts - now()) > 3 * 86400000) ts = now();
+    if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
     return {
       id: o.id, ts, n: name, p: phone, nt: clean(o.nt, 140), it, total,
       pay: o.pay === 'counter' ? 'counter' : 'upi', svc: o.svc === 'take' ? 'take' : 'dine', tbl: clean(o.tbl, 8)
     };
   }
 
-  const canon = (m) => JSON.stringify([m.k, m.e, m.ts, m.id || '', m.s || '', m.r || '', m.v ? 1 : 0, m.open ? 1 : 0,
-    (m.oos || []).join(','), m.prep || 0, m.note || '']);
-
-  /* ---------- Crypto ---------- */
-  let pubKeysPromise = null;
-  const publicKeys = () => pubKeysPromise || (pubKeysPromise = (async () => {
-    if (!KEYS.enc || !KEYS.sig) throw new Error('Keys missing');
-    return {
-      enc: await crypto.subtle.importKey('jwk', KEYS.enc, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']),
-      sig: await crypto.subtle.importKey('jwk', KEYS.sig, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
-    };
-  })());
-
-  async function sealOrder(order) {
-    const pub = await publicKeys();
-    const aes = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const body = textEnc.encode(JSON.stringify({ id: order.id, ts: order.ts, n: order.n, p: order.p, nt: order.nt, it: order.it, pay: order.pay, svc: order.svc, tbl: order.tbl }));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, body);
-    const wrapped = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pub.enc, await crypto.subtle.exportKey('raw', aes));
-    return { k: 'o', e: randomString(12), id: order.id, w: toB64(wrapped), i: toB64(iv), c: toB64(ct) };
-  }
-
-  async function openOrder(msg, privateKey) {
-    const raw = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, fromB64(msg.w));
-    const aes = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(msg.i) }, aes, fromB64(msg.c));
-    return validateOrder(JSON.parse(textDec.decode(plain)));
-  }
-
-  async function verifyAdminMessage(msg) {
-    try {
-      if (typeof msg.sig !== 'string' || msg.sig.length > 200) return false;
-      const pub = await publicKeys();
-      return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub.sig, fromB64(msg.sig), textEnc.encode(canon(msg)));
-    } catch (e) { return false; }
-  }
-
-  let adminKeys = null; // { dec, sign } CryptoKeys, set only in the admin console
-  const setAdminKeys = (keys) => { adminKeys = keys; };
-
-  async function unwrapAdminKeys(password) {
-    const wrap = KEYS.wrap;
-    if (!wrap) throw new Error('No wrapped keys');
-    const material = await crypto.subtle.importKey('raw', textEnc.encode(password), 'PBKDF2', false, ['deriveKey']);
-    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: fromB64(wrap.salt), iterations: wrap.iter, hash: 'SHA-256' },
-      material, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(wrap.iv) }, key, fromB64(wrap.ct)); // throws on a wrong password
-    const jwks = JSON.parse(textDec.decode(plain));
-    return {
-      dec: await crypto.subtle.importKey('jwk', jwks.enc, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']),
-      sign: await crypto.subtle.importKey('jwk', jwks.sig, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
-    };
-  }
 
   /* ---------- Config shared by the admin (store open, sold-out items, prep time) ---------- */
   let cfg = { open: true, oos: [], prep: 12, note: '', ts: 0 };
+  let lastClr = 0;
 
-  /* ---------- Ingest: every message (relay, other tab, or local) flows through here ---------- */
-  const seen = new Set();
-  async function ingest(topicName, msg) {
-    if (!msg || typeof msg !== 'object' || typeof msg.e !== 'string' || msg.e.length > 40 || seen.has(msg.e)) return;
-    seen.add(msg.e);
-    if (seen.size > 5000) seen.delete(seen.values().next().value);
-
-    if (topicName === 'orders') {
-      if (msg.k !== 'o' || !adminKeys || !validId(msg.id) || [msg.w, msg.i, msg.c].some((v) => typeof v !== 'string' || v.length > 3000)) return;
-      try {
-        const order = await openOrder(msg, adminKeys.dec);
-        if (order && order.id === msg.id) emit('order', order);
-      } catch (e) { /* not encrypted for us or tampered */ }
-      return;
-    }
-
-    if (!(await verifyAdminMessage(msg))) return;
-    const ts = Number(msg.ts);
-    if (!Number.isFinite(ts)) return;
-    if (msg.k === 'st' && validId(msg.id) && STATUS[msg.s]) emit('status', { id: msg.id, s: msg.s, r: clean(msg.r, 80), ts });
-    else if (msg.k === 'pv' && validId(msg.id)) emit('pay', { id: msg.id, v: !!msg.v, ts });
-    else if (msg.k === 'clr') emit('clear', { ts });
-    else if (msg.k === 'cfg' && ts >= cfg.ts) {
-      cfg = { open: !!msg.open, oos: (Array.isArray(msg.oos) ? msg.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
-        prep: Math.min(180, Math.max(1, Math.floor(Number(msg.prep)) || 12)), note: clean(msg.note, 120), ts };
-      store.set('cfg', cfg);
-      emit('cfg', cfg);
-    }
-  }
-
-  /* ---------- Transport: local tabs (BroadcastChannel) + ntfy relay with retrying outbox ---------- */
-  let channel = null;
+  /* ---------- Firebase ---------- */
   const relayState = { orders: false, ops: false };
-  const emitRelay = () => emit('relay', { ...relayState, queued: store.get('outbox', []).length });
+  let inflight = 0;
+  const emitRelay = () => emit('relay', { ...relayState, queued: inflight });
 
-  let flushing = false;
-  let retryTimer = null;
-  let retryDelay = 3000;
-  async function flush() {
-    if (flushing) return;
-    flushing = true;
+  let fb = null;
+  function firebase() {
+    if (fb) return fb;
+    const FB = window.LH_FB;
+    const config = window.LH_FIREBASE;
+    if (!FB || !config || !config.projectId) throw new Error('Firebase is not configured');
+    const app = FB.initializeApp(config);
+    let db;
     try {
-      let queue = store.get('outbox', []);
-      while (queue.length) {
-        const item = queue[0];
-        const res = await fetch(`${RELAY}/${TOPICS[item.topic]}`, { method: 'POST', body: JSON.stringify(item.msg) });
-        if (!res.ok) throw new Error(`Relay ${res.status}`);
-        try {
-          const info = await res.json();
-          if (info && info.time && queue.length === 1) setOffset(info.time * 1000 - Date.now());
-        } catch (e) { /* response body is optional */ }
-        queue = store.get('outbox', []).filter((q) => q.msg.e !== item.msg.e);
-        store.set('outbox', queue);
-        retryDelay = 3000;
-        emitRelay();
-      }
-    } catch (e) {
-      clearTimeout(retryTimer);
-      retryTimer = setTimeout(flush, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 60000);
-      emitRelay();
-    } finally { flushing = false; }
+      db = FB.initializeFirestore(app, { localCache: FB.persistentLocalCache({ tabManager: FB.persistentMultipleTabManager() }) });
+    } catch (e) { db = FB.getFirestore(app); }
+    fb = { app, db, auth: FB.getAuth(app) };
+    return fb;
   }
 
-  async function send(topicName, msg) {
-    await ingest(topicName, msg);
-    if (channel) channel.postMessage({ topic: topicName, msg });
-    const queue = store.get('outbox', []);
-    queue.push({ topic: topicName, msg });
-    store.set('outbox', queue.slice(-300));
+  let authReady = null;
+  const authInit = () => authReady || (authReady = new Promise((resolve) => {
+    const off = window.LH_FB.onAuthStateChanged(firebase().auth, () => { off(); resolve(); });
+  }));
+  async function ensureUser() {
+    await authInit();
+    const { auth } = firebase();
+    return auth.currentUser || (await window.LH_FB.signInAnonymously(auth)).user;
+  }
+  async function adminUser() {
+    await authInit();
+    const u = firebase().auth.currentUser;
+    return u && !u.isAnonymous ? u : null;
+  }
+  const adminAuth = {
+    current: adminUser,
+    async signIn(email, password) { return (await window.LH_FB.signInWithEmailAndPassword(firebase().auth, email, password)).user; },
+    async signOut() { await authInit(); await window.LH_FB.signOut(firebase().auth); }
+  };
+
+  // Resolves after 8 s even if offline: the write stays queued in the local cache and syncs later.
+  function write(promise) {
+    inflight++;
     emitRelay();
-    flush();
+    const done = promise.finally(() => { inflight--; emitRelay(); });
+    return Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
 
-  async function publishAdmin(fields) {
-    if (!adminKeys) throw new Error('Console is locked');
-    const msg = { ...fields, e: randomString(12), ts: now() };
-    msg.sig = toB64(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, adminKeys.sign, textEnc.encode(canon(msg))));
-    return send('ops', msg);
-  }
+  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl });
+  const fromDoc = (d) => validateOrder({
+    id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
+    it: (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
+  });
 
   async function publishOrder(draft) {
     const order = validateOrder({ ...draft, id: draft.id || newOrderId(), ts: now() });
     if (!order) throw new Error('Invalid order');
-    await send('orders', await sealOrder(order));
+    const user = await ensureUser();
+    const { db } = firebase();
+    await write(window.LH_FB.setDoc(window.LH_FB.doc(db, 'orders', order.id), { ...toDoc(order), uid: user.uid, at: window.LH_FB.serverTimestamp() }));
     return order;
   }
 
-  /* ---------- Streams (SSE with polling fallback) ---------- */
+  const finalStatus = new Map();
+  async function clearBoard(ts) {
+    const FB = window.LH_FB;
+    const { db } = firebase();
+    await write(FB.setDoc(FB.doc(db, 'config', 'store'), { clr: ts }, { merge: true }));
+    for (;;) {
+      const snap = await FB.getDocs(FB.query(FB.collection(db, 'orders'), FB.limit(200)));
+      if (snap.empty) break;
+      const batch = FB.writeBatch(db);
+      snap.docs.forEach((d) => {
+        batch.delete(d.ref);
+        if (finalStatus.get(d.id)) batch.delete(FB.doc(db, 'status', d.id));
+      });
+      await batch.commit();
+      if (snap.size < 200) break;
+    }
+  }
+
+  async function publishAdmin(f) {
+    if (!(await adminUser())) throw new Error('Console is locked');
+    const FB = window.LH_FB;
+    const { db } = firebase();
+    const ts = now();
+    if (f.k === 'st') {
+      if (!validId(f.id) || !STATUS[f.s]) throw new Error('Invalid status');
+      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts }, { merge: true }));
+    }
+    if (f.k === 'pv') {
+      if (!validId(f.id)) throw new Error('Invalid order');
+      return write(FB.setDoc(FB.doc(db, 'status', f.id), { v: !!f.v, pts: ts, u: ts }, { merge: true }));
+    }
+    if (f.k === 'cfg') {
+      return write(FB.setDoc(FB.doc(db, 'config', 'store'), {
+        open: !!f.open, oos: (Array.isArray(f.oos) ? f.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
+        prep: Math.min(180, Math.max(1, Math.floor(Number(f.prep)) || 12)), note: clean(f.note, 120), ts
+      }, { merge: true }));
+    }
+    if (f.k === 'clr') return clearBoard(ts);
+    throw new Error('Unknown action');
+  }
+
+  function applyCfgDoc(d) {
+    const clr = Number(d.clr) || 0;
+    if (clr > lastClr) { lastClr = clr; emit('clear', { ts: clr }); }
+    const ts = Number(d.ts) || 0;
+    if (d.open === undefined || ts < cfg.ts) return;
+    cfg = {
+      open: !!d.open, oos: (Array.isArray(d.oos) ? d.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
+      prep: Math.min(180, Math.max(1, Math.floor(Number(d.prep)) || 12)), note: clean(d.note, 120), ts
+    };
+    store.set('cfg', cfg);
+    emit('cfg', cfg);
+  }
+
+  function emitStatus(id, d) {
+    if (typeof d.s === 'string' && STATUS[d.s]) {
+      finalStatus.set(id, d.s === 'completed' || d.s === 'rejected');
+      emit('status', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
+    }
+    if (typeof d.v === 'boolean') emit('pay', { id, v: d.v, ts: Number(d.pts) || 0 });
+  }
+
+  /* ---------- Streams ---------- */
   const streams = {};
   function connect(name) {
     if (streams[name]) return;
-    const topic = TOPICS[name];
-    const key = `since.${name}`;
-    let since = Number(store.get(key, 0)) || 0;
-    let source = null;
-    let reconnect = null;
-    let poller = null;
-    let backoff = 1500;
-
-    const sinceParam = () => (since ? String(Math.max(0, since - 30)) : 'all');
-    const setUp = (up) => { if (relayState[name] !== up) { relayState[name] = up; emitRelay(); } };
-    const handle = (m) => {
-      if (!m || m.event !== 'message') return;
-      if (m.time && m.time > since) { since = m.time; store.set(key, since); }
-      let parsed = null;
-      try { parsed = JSON.parse(m.message); } catch (e) { return; }
-      ingest(name, parsed);
-    };
-    const poll = async () => {
+    streams[name] = true;
+    const up = (v) => { if (relayState[name] !== v) { relayState[name] = v; emitRelay(); } };
+    const fail = (e) => { up(false); console.warn(`LH ${name} stream`, e && e.code ? e.code : e); };
+    (async () => {
       try {
-        const res = await fetch(`${RELAY}/${topic}/json?poll=1&since=${sinceParam()}`);
-        if (!res.ok) throw new Error(String(res.status));
-        (await res.text()).split('\n').filter(Boolean).forEach((line) => { try { handle(JSON.parse(line)); } catch (e) { /* skip */ } });
-        setUp(true);
-      } catch (e) { setUp(false); }
-    };
-    const startPoll = () => { if (!poller) { poll(); poller = setInterval(poll, 6000); } };
-    const stopPoll = () => { clearInterval(poller); poller = null; };
-    const open = () => {
-      clearTimeout(reconnect);
-      if (source) source.close();
-      source = new EventSource(`${RELAY}/${topic}/sse?since=${sinceParam()}`);
-      source.addEventListener('open', (e) => {
-        backoff = 1500;
-        stopPoll();
-        setUp(true);
-        if (e.data) { try { const m = JSON.parse(e.data); if (m.time) setOffset(m.time * 1000 - Date.now()); } catch (err) { /* ignore */ } }
-      });
-      source.addEventListener('message', (e) => { try { handle(JSON.parse(e.data)); } catch (err) { /* ignore */ } });
-      source.addEventListener('error', () => {
-        source.close();
-        setUp(false);
-        startPoll();
-        reconnect = setTimeout(open, backoff);
-        backoff = Math.min(backoff * 2, 30000);
-      });
-    };
-    streams[name] = { reopen: () => { if (!relayState[name]) open(); } };
-    open();
+        const FB = window.LH_FB;
+        if (name === 'ops') {
+          FB.onSnapshot(FB.doc(firebase().db, 'config', 'store'), (snap) => {
+            up(!snap.metadata.fromCache);
+            if (snap.exists()) applyCfgDoc(snap.data());
+          }, fail);
+          return;
+        }
+        if (!(await adminUser())) throw new Error('Console is locked');
+        const { db } = firebase();
+        FB.onSnapshot(FB.query(FB.collection(db, 'orders'), FB.orderBy('at', 'desc'), FB.limit(500)), (snap) => {
+          up(!snap.metadata.fromCache);
+          snap.docChanges().forEach((ch) => {
+            if (ch.type !== 'added') return;
+            const o = fromDoc({ ...ch.doc.data({ serverTimestamps: 'estimate' }), id: ch.doc.id });
+            if (o) emit('order', o);
+          });
+        }, fail);
+        FB.onSnapshot(FB.query(FB.collection(db, 'status'), FB.where('u', '>', now() - 3 * 86400000)), (snap) => {
+          snap.docChanges().forEach((ch) => { if (ch.type !== 'removed') emitStatus(ch.doc.id, ch.doc.data()); });
+        }, fail);
+      } catch (e) { streams[name] = false; fail(e); }
+    })();
+  }
+
+  /* Customers follow the status of their own orders by id (readable by id only, never listable). */
+  const watchers = new Map();
+  function watch(ids) {
+    const wanted = new Set((ids || []).filter(validId).slice(0, 20));
+    watchers.forEach((off, id) => { if (!wanted.has(id)) { off(); watchers.delete(id); } });
+    wanted.forEach((id) => {
+      if (watchers.has(id)) return;
+      watchers.set(id, () => {});
+      ensureUser().then(() => {
+        if (!watchers.has(id)) return;
+        const FB = window.LH_FB;
+        watchers.set(id, FB.onSnapshot(FB.doc(firebase().db, 'status', id), (snap) => { if (snap.exists()) emitStatus(id, snap.data()); }, () => {}));
+      }).catch(() => watchers.delete(id));
+    });
+  }
+
+  async function flush() {
+    try {
+      const FB = window.LH_FB;
+      const { db } = firebase();
+      await FB.disableNetwork(db);
+      await FB.enableNetwork(db);
+    } catch (e) { /* not connected yet */ }
+    emitRelay();
   }
 
   function init(app) {
     prefix = `lh.${app}.`;
-    offset = Number(store.get('offset', 0)) || 0;
     cfg = { ...cfg, ...store.get('cfg', {}) };
-    if ('BroadcastChannel' in window) {
-      channel = new BroadcastChannel('lh-bus');
-      channel.onmessage = (e) => {
-        const d = e.data;
-        if (d && TOPICS[d.topic]) ingest(d.topic, d.msg);
-      };
-    }
-    window.addEventListener('online', () => { flush(); Object.values(streams).forEach((s) => s.reopen()); });
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) { flush(); Object.values(streams).forEach((s) => s.reopen()); }
-    });
-    if (store.get('outbox', []).length) flush();
+    window.addEventListener('online', flush);
   }
 
   window.LH = {
-    UPI, MENU, ITEMS, STATUS, NEXT, TOPICS,
+    UPI, MENU, ITEMS, STATUS, NEXT,
     fmt, esc, clean, slug, randomString, newOrderId, validId, priceLines, validateOrder,
-    store, now, on, emit, init, connect, flush,
-    publishOrder, publishAdmin, unwrapAdminKeys, setAdminKeys,
+    store, now, on, emit, init, connect, watch, flush,
+    publishOrder, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
-    getRelay: () => ({ ...relayState, queued: store.get('outbox', []).length }),
-    hasWrap: () => !!KEYS.wrap
+    getRelay: () => ({ ...relayState, queued: inflight })
   };
 })();

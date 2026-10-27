@@ -1,0 +1,13 @@
+{
+  "name": "lh-firebase-bundle",
+  "private": true,
+  "scripts": {
+    "build": "esbuild entry.js --bundle --minify --format=iife --target=es2020 --outfile=fb.js"
+  },
+  "dependencies": {
+    "firebase": "^11.10.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

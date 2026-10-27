@@ -6,7 +6,7 @@
   <title>Laural's Haven | Admin Console</title>
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#0b1020">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://ntfy.sh; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; base-uri 'none'; form-action 'none'">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,14 +17,15 @@
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <section class="lock" id="lock">
-    <form class="lock-card" id="loginForm" autocomplete="off">
+    <form class="lock-card" id="loginForm" autocomplete="on">
       <div class="lock-ico">🔐</div>
       <h1>Laural's <b>Haven</b></h1>
       <p>Admin Console · kitchen operations</p>
+      <label class="pw"><input id="email" type="email" placeholder="Admin email" autocomplete="username" required></label>
       <label class="pw"><input id="pw" type="password" placeholder="Admin password" autocomplete="current-password" required><button type="button" id="pwToggle" aria-label="Show password">👁</button></label>
       <div class="lock-msg" id="lockMsg" role="alert"></div>
-      <button class="btn primary" id="loginBtn" type="submit">Unlock console</button>
-      <small>Your password never leaves this device. It unlocks the keys that decrypt customer orders.</small>
+      <button class="btn primary" id="loginBtn" type="submit">Sign in</button>
+      <small>Sign in with the admin account. Only that account can read customer orders.</small>
     </form>
   </section>
 
@@ -94,10 +95,10 @@
             <div class="cfg-row"><div><h4>Desktop notifications</h4><p>Pop-ups when the tab is in the background.</p></div><button class="btn ghost sm" id="notifyBtn">Enable</button></div>
             <button class="btn ghost sm" id="testSound">Play test chime</button></div>
           <div class="panel"><h3>Connection</h3><div id="connInfo"></div><button class="btn ghost sm" id="retrySend">Retry sending now</button></div>
-          <div class="panel"><h3>Data</h3><p class="muted">Orders are stored on this device only. The relay keeps encrypted messages for about 12 hours.</p>
+          <div class="panel"><h3>Data</h3><p class="muted">Orders sync live through Firebase and are also cached on this device.</p>
             <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
             <button class="btn danger sm" id="clearBoard">Clear board for everyone</button></div></div>
-          <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are encrypted end to end (RSA-OAEP + AES-GCM).</li><li>Status changes are digitally signed (ECDSA P-256).</li><li>Session auto-locks after 90 minutes.</li><li>To rotate the password, re-run <code>tools/gen-keys.mjs</code> and redeploy both sites.</li></ul></div>
+          <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are readable only by the signed-in admin account (Firestore security rules).</li><li>Customers can create orders but never read other customers' orders.</li><li>Session auto-locks after 12 hours.</li><li>Change the password in Firebase Console, Authentication.</li></ul></div>
         </div>
       </section>
     </div>
@@ -107,7 +108,8 @@
   <div class="modal" id="modal" hidden role="dialog" aria-modal="true"><div class="modal-card" id="modalCard"></div></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
-  <script src="keys.js"></script>
+  <script src="fb-config.js"></script>
+  <script src="fb.js"></script>
   <script src="core.js"></script>
   <script src="app.js"></script>
 </body>

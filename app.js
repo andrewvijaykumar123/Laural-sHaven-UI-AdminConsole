@@ -7,7 +7,7 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const SESSION_MS = 90 * 60 * 1000;
+  const SESSION_MS = 12 * 60 * 60 * 1000;
 
   /* ---------- Theme ---------- */
   const setTheme = (t) => { document.documentElement.dataset.theme = t; store.set('theme', t); };
@@ -27,56 +27,40 @@
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.closest('[data-modal-close]')) closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
-  /* ---------- Session persistence (non-extractable keys in IndexedDB) ---------- */
-  const idb = {
-    open: () => new Promise((res, rej) => {
-      const r = indexedDB.open('lh-admin', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('kv');
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    }),
-    async run(mode, fn) {
-      const db = await this.open();
-      return new Promise((res, rej) => {
-        const tx = db.transaction('kv', mode);
-        const req = fn(tx.objectStore('kv'));
-        tx.oncomplete = () => { db.close(); res(req && req.result); };
-        tx.onerror = () => { db.close(); rej(tx.error); };
-      });
-    },
-    get: (k) => idb.run('readonly', (s) => s.get(k)),
-    put: (k, v) => idb.run('readwrite', (s) => s.put(v, k)),
-    del: (k) => idb.run('readwrite', (s) => s.delete(k))
-  };
-
-  /* ---------- Login ---------- */
+  /* ---------- Login (Firebase Authentication) ---------- */
   const lockMsg = (t) => { $('#lockMsg').textContent = t; };
   $('#pwToggle').addEventListener('click', () => { const i = $('#pw'); i.type = i.type === 'password' ? 'text' : 'password'; });
+  const AUTH_ERRORS = {
+    'auth/invalid-credential': 'Incorrect email or password.', 'auth/wrong-password': 'Incorrect email or password.', 'auth/user-not-found': 'Incorrect email or password.',
+    'auth/invalid-email': 'Enter a valid email address.', 'auth/too-many-requests': 'Too many attempts. Try again later.',
+    'auth/network-request-failed': 'No connection. Check your internet and try again.', 'auth/operation-not-allowed': 'Email/password sign-in is not enabled in Firebase.',
+    'auth/unauthorized-domain': 'This site is not an authorized domain in Firebase.'
+  };
 
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const until = Number(store.get('lockUntil', 0));
     if (Date.now() < until) { lockMsg(`Too many attempts. Try again in ${Math.ceil((until - Date.now()) / 1000)}s.`); return; }
     const btn = $('#loginBtn');
-    btn.disabled = true; btn.textContent = 'Unlocking...'; lockMsg('');
+    btn.disabled = true; btn.textContent = 'Signing in...'; lockMsg('');
     try {
-      if (!LH.hasWrap()) throw new Error('missing');
-      const keys = await LH.unwrapAdminKeys($('#pw').value);
+      await LH.admin.signIn($('#email').value.trim(), $('#pw').value);
       $('#pw').value = '';
       store.del('fails');
-      try { await idb.put('session', { keys, exp: Date.now() + SESSION_MS }); } catch (err) { /* private mode: session will not persist */ }
-      start(keys, Date.now() + SESSION_MS);
+      store.set('loginAt', Date.now());
+      start(Date.now() + SESSION_MS);
     } catch (err) {
       const fails = Number(store.get('fails', 0)) + 1;
       store.set('fails', fails);
       if (fails >= 5) { store.set('lockUntil', Date.now() + 30000 * Math.min(8, fails - 4)); lockMsg('Too many attempts. Locked for a short while.'); }
-      else lockMsg('Incorrect password.');
+      else lockMsg(AUTH_ERRORS[err && err.code] || `Sign-in failed${err && err.code ? ` (${err.code})` : ''}.`);
       const card = $('.lock-card'); card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
-    } finally { btn.disabled = false; btn.textContent = 'Unlock console'; }
+    } finally { btn.disabled = false; btn.textContent = 'Sign in'; }
   });
 
   async function lock() {
-    try { await idb.del('session'); } catch (e) { /* ignore */ }
+    try { await LH.admin.signOut(); } catch (e) { /* ignore */ }
+    store.del('loginAt');
     location.reload();
   }
   $('#lockBtn').addEventListener('click', lock);
@@ -84,13 +68,13 @@
 
   (async () => {
     try {
-      const s = await idb.get('session');
-      if (s && s.exp > Date.now() && s.keys) { start(s.keys, s.exp); return; }
-      if (s) await idb.del('session');
-    } catch (e) { /* no stored session */ }
-    $('#pw').focus();
+      const user = await LH.admin.current();
+      const exp = Number(store.get('loginAt', 0)) + SESSION_MS;
+      if (user && exp > Date.now()) { start(exp); return; }
+      if (user) await LH.admin.signOut();
+    } catch (e) { /* not signed in */ }
+    $('#email').focus();
   })();
-
   /* ---------- Data ---------- */
   let orders = new Map();
   let meta = {};
@@ -107,10 +91,9 @@
   const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const money = (arr) => arr.reduce((s, o) => s + o.total, 0);
 
-  function start(keys, expiry) {
+  function start(expiry) {
     if (started) return;
     started = true;
-    LH.setAdminKeys(keys);
     $('#lock').hidden = true;
     $('#app').hidden = false;
     setTimeout(lock, Math.max(1000, expiry - Date.now()));
