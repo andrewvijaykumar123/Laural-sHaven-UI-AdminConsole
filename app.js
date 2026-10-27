@@ -1,4 +1,5 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
+const ASSET_VERSION = '20261027-public-fallback';
 const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
