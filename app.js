@@ -1,6 +1,10 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
-const ASSET_VERSION = '20261027-strict-local-api';
-const API_BASE = 'http://localhost:3001';
+const ASSET_VERSION = '20261027-integrated-hosts';
+const API_BASE = (window.LH_API_BASE || (
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:3001'
+    : 'https://laurals-haven-api.onrender.com'
+)).replace(/\/$/, '');
 window.LH_API_BASE = API_BASE;
 const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
