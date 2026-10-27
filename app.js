@@ -1,8 +1,8 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
-const ASSET_VERSION = '20261027-mock-fallback';
+const ASSET_VERSION = '20261027-full-menu';
 const API_BASE = (window.LH_API_BASE || (
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:3001'
+    ? 'http://localhost:3000'
     : 'https://laurals-haven-api.onrender.com'
 )).replace(/\/$/, '');
 window.LH_API_BASE = API_BASE;
@@ -15,51 +15,57 @@ const currencyFormatter = new Intl.NumberFormat('en-IN', {
 
 const MOCK_SUMMARY_RESPONSE = {
   summary: {
-    totalRevenue: 5890,
-    totalOrders: 18,
-    pendingOrders: 3,
+    totalRevenue: 12880,
+    totalOrders: 26,
+    pendingOrders: 4,
     acceptedOrders: 5,
-    deliveredOrders: 10,
+    deliveredOrders: 17,
     popularItems: [
       { name: 'Haven Fuel', quantity: 9 },
       { name: 'Mocha Mist', quantity: 7 },
-      { name: 'Paneer Sandwich', quantity: 6 }
+      { name: 'Paneer Sandwich', quantity: 6 },
+      { name: 'Veg Momos', quantity: 5 },
+      { name: 'Chicken Burger', quantity: 4 }
     ],
-    recentOrders: []
+    recentOrders: [
+      { id: 'LH-1028', total: 699, status: 'pending', customerName: 'Amit' },
+      { id: 'LH-1027', total: 845, status: 'accepted', customerName: 'Sneha' },
+      { id: 'LH-1026', total: 1199, status: 'delivered', customerName: 'Nisha' }
+    ]
   }
 };
 
 const MOCK_ORDERS_RESPONSE = {
   orders: [
     {
-      id: 'LH-1001',
-      customerName: 'Aanya',
+      id: 'LH-1028',
+      customerName: 'Amit',
       phone: '+91 99999 11111',
       paymentMethod: 'UPI',
       status: 'pending',
-      total: 458,
+      total: 699,
       createdAt: new Date().toISOString(),
-      items: [{ name: 'Haven Fuel', qty: 2, price: 159 }, { name: 'Veg Momos', qty: 1, price: 129 }]
+      items: [{ name: 'Haven Fuel', qty: 2, price: 159 }, { name: 'Veg Momos', qty: 1, price: 129 }, { name: 'Paneer Sandwich', qty: 1, price: 149 }]
     },
     {
-      id: 'LH-1002',
-      customerName: 'Rohan',
+      id: 'LH-1027',
+      customerName: 'Sneha',
       phone: '+91 88888 22222',
       paymentMethod: 'UPI',
       status: 'accepted',
-      total: 339,
+      total: 845,
       createdAt: new Date(Date.now() - 900000).toISOString(),
-      items: [{ name: 'Paneer Sandwich', qty: 1, price: 149 }, { name: 'Cold Brew', qty: 1, price: 169 }]
+      items: [{ name: 'Mocha Mist', qty: 2, price: 189 }, { name: 'Chicken Burger', qty: 1, price: 139 }, { name: 'Cold Brew', qty: 1, price: 169 }]
     },
     {
-      id: 'LH-1003',
-      customerName: 'Meera',
+      id: 'LH-1026',
+      customerName: 'Nisha',
       phone: '+91 77777 33333',
       paymentMethod: 'UPI',
       status: 'delivered',
-      total: 528,
+      total: 1199,
       createdAt: new Date(Date.now() - 1800000).toISOString(),
-      items: [{ name: 'Chicken Burger', qty: 2, price: 219 }]
+      items: [{ name: 'Chicken Burger', qty: 2, price: 219 }, { name: 'Paneer Sandwich', qty: 2, price: 149 }, { name: 'Haven Fuel', qty: 2, price: 159 }]
     }
   ]
 };
