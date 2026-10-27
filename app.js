@@ -1,5 +1,7 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
-const ASSET_VERSION = '20261027-public-fallback';
+const ASSET_VERSION = '20261027-strict-local-api';
+const API_BASE = 'http://localhost:3001';
+window.LH_API_BASE = API_BASE;
 const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -13,30 +15,7 @@ const state = {
   filterStatus: 'all'
 };
 
-const FALLBACK_DASHBOARD = {
-  summary: {
-    totalRevenue: 0,
-    totalOrders: 0,
-    pendingOrders: 0,
-    deliveredOrders: 0,
-    popularItems: []
-  },
-  orders: []
-};
-
-async function fetchJsonWithRetry(path, options = {}, retries = 3) {
-  const fallbackMap = {
-    '/api/menu': ['./menu.json'],
-    '/api/admin/summary': ['./dashboard.json'],
-    '/api/orders': ['./dashboard.json']
-  };
-
-  const builtInFallbacks = {
-    '/api/menu': { upiId: 'paytm.s1pl5v7@pty', upiName: "Laural's Haven", menu: [] },
-    '/api/admin/summary': { summary: FALLBACK_DASHBOARD.summary },
-    '/api/orders': { orders: FALLBACK_DASHBOARD.orders }
-  };
-
+async function fetchJsonWithRetry(path, options = {}, retries = 2) {
   let lastError;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -60,26 +39,6 @@ async function fetchJsonWithRetry(path, options = {}, retries = 3) {
       return await response.json();
     } catch (error) {
       lastError = error;
-
-      const fallbackUrls = fallbackMap[path] || [];
-      for (const fallbackUrl of fallbackUrls) {
-        try {
-          const fallbackResponse = await fetch(fallbackUrl, {
-            cache: 'no-store',
-            ...options
-          });
-          if (fallbackResponse.ok) {
-            return await fallbackResponse.json();
-          }
-        } catch (fallbackError) {
-          // Fall through to built-in fallback below.
-        }
-      }
-
-      if (builtInFallbacks[path]) {
-        return builtInFallbacks[path];
-      }
-
       if (attempt < retries) {
         await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       }
@@ -90,32 +49,16 @@ async function fetchJsonWithRetry(path, options = {}, retries = 3) {
 }
 
 function getApiBase() {
-  const configuredBase = (window.LH_API_BASE || '').trim().replace(/\/$/, '');
-  if (configuredBase) return configuredBase;
-
-  const host = (window.location.hostname || '').toLowerCase();
-  if (host.includes('github.io') || host.includes('pages.dev')) {
-    return 'https://laurals-haven-api.onrender.com';
-  }
-
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return 'http://localhost:3000';
-  }
-
-  return window.location.origin;
+  return API_BASE;
 }
 
-function apiUrl(path) {
+function apiUrl(path, baseUrl = API_BASE) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${getApiBase()}${normalizedPath}`;
+  return `${baseUrl.replace(/\/$/, '')}${normalizedPath}`;
 }
 
 function hasConfiguredBackend() {
-  const configuredBase = (window.LH_API_BASE || '').trim();
-  if (configuredBase) return true;
-
-  const host = (window.location.hostname || '').toLowerCase();
-  return host.includes('github.io') || host.includes('pages.dev') || host === 'localhost' || host === '127.0.0.1';
+  return true;
 }
 
 const elements = {
