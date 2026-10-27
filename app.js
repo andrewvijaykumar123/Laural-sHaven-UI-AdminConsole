@@ -61,6 +61,7 @@
   async function lock() {
     try { await LH.admin.signOut(); } catch (e) { /* ignore */ }
     store.del('loginAt');
+    store.del('orders');
     location.reload();
   }
   $('#lockBtn').addEventListener('click', lock);

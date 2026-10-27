@@ -6,11 +6,11 @@ Features: live kanban board with drag and drop, accept/reject with reasons, paym
 
 ## Security model
 
-The admin signs in with an Email/Password account from Firebase Authentication. `firestore.rules` allows only that email to read orders or change status/config; customers (anonymous users) can only create valid orders. The password lives only in Firebase; change it in Firebase Console, Authentication.
+The admin signs in with an Email/Password account from Firebase Authentication. `firestore.rules` allows only that account (matched by its Firebase User UID) to read orders or change status/config; customers (anonymous users) can only create valid orders while the store is open. The password lives only in Firebase; change it in Firebase Console, Authentication.
 
 ## Firestore rules
 
-Set the admin email in `firestore.rules` (`REPLACE_WITH_ADMIN_EMAIL`), then publish with `firebase deploy --only firestore:rules` or paste the file into Firebase Console, Firestore, Rules.
+Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it from Firebase Console, Authentication, Users), then publish with `firebase deploy --only firestore:rules` or paste the file into Firebase Console, Firestore, Rules.
 
 ## Rebuild the Firebase bundle
 

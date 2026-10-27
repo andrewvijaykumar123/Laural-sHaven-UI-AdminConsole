@@ -156,6 +156,13 @@
   let inflight = 0;
   const emitRelay = () => emit('relay', { ...relayState, queued: inflight });
 
+  // Meta CSP cannot set frame-ancestors, so refuse to run inside another site's frame (clickjacking).
+  if (window.top !== window.self) {
+    document.documentElement.style.display = 'none';
+    try { window.top.location = window.self.location; } catch (e) { /* cross-origin top */ }
+    throw new Error('Framing is not allowed');
+  }
+
   let fb = null;
   function firebase() {
     if (fb) return fb;
@@ -167,7 +174,9 @@
     try {
       db = FB.initializeFirestore(app, { localCache: FB.persistentLocalCache({ tabManager: FB.persistentMultipleTabManager() }) });
     } catch (e) { db = FB.getFirestore(app); }
-    fb = { app, db, auth: FB.getAuth(app) };
+    let auth;
+    try { auth = FB.initializeAuth(app, { persistence: [FB.indexedDBLocalPersistence, FB.browserLocalPersistence] }); } catch (e) { auth = FB.getAuth(app); }
+    fb = { app, db, auth };
     return fb;
   }
 

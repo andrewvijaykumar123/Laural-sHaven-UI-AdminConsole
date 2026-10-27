@@ -5,9 +5,13 @@
     "build": "esbuild entry.js --bundle --minify --format=iife --target=es2020 --outfile=fb.js"
   },
   "dependencies": {
-    "firebase": "^11.10.0"
+    "firebase": "^11.10.0",
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.3"
   }
 }
