@@ -1,10 +1,6 @@
 const ADMIN_PASSWORD = 'MyLove4Jesu$';
 const ASSET_VERSION = '20261027-full-menu';
-const API_BASE = (window.LH_API_BASE || (
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:3000'
-    : 'https://laurals-haven-api.onrender.com'
-)).replace(/\/$/, '');
+const API_BASE = 'https://laurals-haven-api.onrender.com';
 window.LH_API_BASE = API_BASE;
 const ADMIN_SESSION_TTL_MS = 90 * 60 * 1000;
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
@@ -13,85 +9,17 @@ const currencyFormatter = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0
 });
 
-const MOCK_SUMMARY_RESPONSE = {
-  summary: {
-    totalRevenue: 12880,
-    totalOrders: 26,
-    pendingOrders: 4,
-    acceptedOrders: 5,
-    deliveredOrders: 17,
-    popularItems: [
-      { name: 'Haven Fuel', quantity: 9 },
-      { name: 'Mocha Mist', quantity: 7 },
-      { name: 'Paneer Sandwich', quantity: 6 },
-      { name: 'Veg Momos', quantity: 5 },
-      { name: 'Chicken Burger', quantity: 4 }
-    ],
-    recentOrders: [
-      { id: 'LH-1028', total: 699, status: 'pending', customerName: 'Amit' },
-      { id: 'LH-1027', total: 845, status: 'accepted', customerName: 'Sneha' },
-      { id: 'LH-1026', total: 1199, status: 'delivered', customerName: 'Nisha' }
-    ]
-  }
-};
-
-const MOCK_ORDERS_RESPONSE = {
-  orders: [
-    {
-      id: 'LH-1028',
-      customerName: 'Amit',
-      phone: '+91 99999 11111',
-      paymentMethod: 'UPI',
-      status: 'pending',
-      total: 699,
-      createdAt: new Date().toISOString(),
-      items: [{ name: 'Haven Fuel', qty: 2, price: 159 }, { name: 'Veg Momos', qty: 1, price: 129 }, { name: 'Paneer Sandwich', qty: 1, price: 149 }]
-    },
-    {
-      id: 'LH-1027',
-      customerName: 'Sneha',
-      phone: '+91 88888 22222',
-      paymentMethod: 'UPI',
-      status: 'accepted',
-      total: 845,
-      createdAt: new Date(Date.now() - 900000).toISOString(),
-      items: [{ name: 'Mocha Mist', qty: 2, price: 189 }, { name: 'Chicken Burger', qty: 1, price: 139 }, { name: 'Cold Brew', qty: 1, price: 169 }]
-    },
-    {
-      id: 'LH-1026',
-      customerName: 'Nisha',
-      phone: '+91 77777 33333',
-      paymentMethod: 'UPI',
-      status: 'delivered',
-      total: 1199,
-      createdAt: new Date(Date.now() - 1800000).toISOString(),
-      items: [{ name: 'Chicken Burger', qty: 2, price: 219 }, { name: 'Paneer Sandwich', qty: 2, price: 149 }, { name: 'Haven Fuel', qty: 2, price: 159 }]
-    }
-  ]
-};
-
 const state = {
   summary: null,
   orders: [],
   filterStatus: 'all'
 };
 
-function getMockResponse(path) {
-  const normalizedPath = (path || '').toLowerCase();
-
-  if (normalizedPath.includes('/api/admin/summary')) {
-    return MOCK_SUMMARY_RESPONSE;
-  }
-
-  if (normalizedPath.includes('/api/orders')) {
-    return MOCK_ORDERS_RESPONSE;
-  }
-
-  if (normalizedPath.includes('/api/orders/') && normalizedPath.includes('/status')) {
-    return { success: true, updated: true };
-  }
-
-  return null;
+function normalizeOrderStatus(status) {
+  const normalized = String(status || 'pending').trim().toLowerCase();
+  if (normalized === 'ready') return 'cooking';
+  if (normalized === 'delivered') return 'completed';
+  return normalized;
 }
 
 async function fetchJsonWithRetry(path, options = {}, retries = 2) {
@@ -122,11 +50,6 @@ async function fetchJsonWithRetry(path, options = {}, retries = 2) {
         await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       }
     }
-  }
-
-  const fallbackPayload = getMockResponse(path);
-  if (fallbackPayload) {
-    return fallbackPayload;
   }
 
   throw lastError || new Error('API request failed.');
@@ -162,8 +85,9 @@ const elements = {
 };
 
 function clearAdminSession() {
-  sessionStorage.removeItem('lauralsHavenAdminPassword');
-  sessionStorage.removeItem('lauralsHavenAdminPasswordExpiresAt');
+  sessionStorage.clear();
+  localStorage.removeItem('lauralsHavenAdminPassword');
+  localStorage.removeItem('lauralsHavenAdminPasswordExpiresAt');
 }
 
 function isAuthorized() {
@@ -219,7 +143,7 @@ function renderSummary(summary) {
   elements.totalRevenue.textContent = formatCurrency(summary.totalRevenue || 0);
   elements.totalOrders.textContent = String(summary.totalOrders || 0);
   elements.pendingOrders.textContent = String(summary.pendingOrders || 0);
-  elements.deliveredOrders.textContent = String(summary.deliveredOrders || 0);
+  elements.deliveredOrders.textContent = String(summary.completedOrders ?? summary.deliveredOrders ?? 0);
 
   const items = Array.isArray(summary.popularItems) ? summary.popularItems : [];
   if (!items.length) {
@@ -244,7 +168,7 @@ function renderSummary(summary) {
 function renderStatusFilters() {
   if (!elements.orderStatusFilters) return;
 
-  const options = ['all', 'pending', 'accepted', 'ready', 'delivered'];
+  const options = ['all', 'pending', 'accepted', 'rejected', 'cooking', 'completed'];
   elements.orderStatusFilters.innerHTML = options
     .map((status) => {
       const label = status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1);
@@ -256,8 +180,9 @@ function renderStatusFilters() {
 
 function getVisibleOrders() {
   if (!Array.isArray(state.orders)) return [];
-  if (state.filterStatus === 'all') return state.orders;
-  return state.orders.filter((order) => (order.status || 'pending') === state.filterStatus);
+  const normalizedOrders = state.orders.map((order) => ({ ...order, status: normalizeOrderStatus(order.status) }));
+  if (state.filterStatus === 'all') return normalizedOrders;
+  return normalizedOrders.filter((order) => (order.status || 'pending') === state.filterStatus);
 }
 
 function renderOrders(orders) {
@@ -270,8 +195,18 @@ function renderOrders(orders) {
 
   elements.ordersTable.innerHTML = visibleOrders
     .map((order) => {
-      const status = order.status || 'pending';
+      const status = normalizeOrderStatus(order.status || 'pending');
       const itemList = Array.isArray(order.items) ? order.items.map((item) => `${item.name} × ${item.qty}`).join(', ') : 'No items';
+      const actionButtons = [];
+
+      if (status === 'pending') {
+        actionButtons.push('<button class="accept" data-order-id="' + order.id + '" data-status="accepted">Accept</button>');
+        actionButtons.push('<button class="reject" data-order-id="' + order.id + '" data-status="rejected">Reject</button>');
+      } else if (status === 'accepted') {
+        actionButtons.push('<button class="ready" data-order-id="' + order.id + '" data-status="cooking">Cooking</button>');
+      } else if (status === 'cooking') {
+        actionButtons.push('<button class="deliver" data-order-id="' + order.id + '" data-status="completed">Completed</button>');
+      }
 
       return `
         <div class="order-row">
@@ -297,11 +232,7 @@ function renderOrders(orders) {
           </div>
           <div>
             <span class="status-pill ${status}">${status}</span>
-            <div class="action-group" style="margin-top: 10px;">
-              ${status === 'pending' ? '<button class="accept" data-order-id="' + order.id + '" data-status="accepted">Accept</button>' : ''}
-              ${status === 'accepted' ? '<button class="ready" data-order-id="' + order.id + '" data-status="ready">Ready</button>' : ''}
-              ${status === 'ready' ? '<button class="deliver" data-order-id="' + order.id + '" data-status="delivered">Deliver</button>' : ''}
-            </div>
+            <div class="action-group" style="margin-top: 10px;">${actionButtons.join('')}</div>
           </div>
         </div>
       `;
@@ -317,7 +248,9 @@ async function loadDashboard() {
     ]);
 
     state.summary = summaryData.summary || {};
-    state.orders = Array.isArray(ordersData.orders) ? ordersData.orders : [];
+    state.orders = Array.isArray(ordersData.orders)
+      ? ordersData.orders.map((order) => ({ ...order, status: normalizeOrderStatus(order.status) }))
+      : [];
 
     renderSummary(state.summary);
     renderStatusFilters();
