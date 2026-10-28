@@ -184,10 +184,21 @@
     catch (e) { toast('Could not update the order.', 'bad'); }
   }
 
-  /* Emails are sent by GitHub Actions. A saved token lets this console start the run at once; otherwise a 15-minute schedule picks changes up. */
+  /* Emails are sent by GitHub Actions. The relay (worker/relay.js) starts a run for any signed-in admin device; without it a per-device GitHub token is used, else a 15-minute schedule picks changes up. */
+  const MAIL_RELAY = 'https://laurals-haven-relay.andrewvijaykumar123.workers.dev';
   const GH_REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
   let kickTimer = null;
   async function dispatchWorkflow(file, inputs) {
+    if (MAIL_RELAY) {
+      const u = await LH.admin.current();
+      if (!u) return false;
+      const r = await fetch(MAIL_RELAY, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await u.getIdToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflow: file, ...(inputs || {}) })
+      });
+      return r.ok;
+    }
     const tok = store.get('ghToken', '');
     if (!tok) return null;
     const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${file}/dispatches`, {
@@ -198,7 +209,7 @@
     return r.status === 204;
   }
   function kickMailer() {
-    if (!store.get('ghToken', '')) return;
+    if (!MAIL_RELAY && !store.get('ghToken', '')) return;
     clearTimeout(kickTimer);
     kickTimer = setTimeout(async () => {
       let ok = false;
@@ -207,9 +218,10 @@
     }, 2500);
   }
   function renderMail() {
-    const on = !!store.get('ghToken', '');
+    const on = !!MAIL_RELAY || !!store.get('ghToken', '');
     $('#mailState').textContent = on ? 'Instant emails are on for this device.' : 'Instant emails are off. Emails go out within about 15 minutes.';
-    $('#ghClear').hidden = !on; $('#mailNow').hidden = !on; $('#reportNow').hidden = !on;
+    $('#ghClear').hidden = !on || !!MAIL_RELAY; $('#mailNow').hidden = !on; $('#reportNow').hidden = !on;
+    if (MAIL_RELAY) { $('#ghToken').style.display = 'none'; $('#ghSave').hidden = true; }
   }
   async function runNow(btn, file, inputs, okMsg) {
     btn.disabled = true;

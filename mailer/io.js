@@ -4,7 +4,7 @@ const admin = require('firebase-admin');
 const nodemailer = require('nodemailer');
 const { SHOP } = require('./lib');
 
-const SENDER = process.env.MAIL_FROM || 'andrewvijaykumar123@gmail.com';
+const SENDER = 'andrewvijaykumar123@gmail.com';
 
 function need(name) {
   const v = process.env[name];
