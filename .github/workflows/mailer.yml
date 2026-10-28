@@ -2,6 +2,8 @@ name: Order emails
 
 on:
   workflow_dispatch:
+  push:
+    paths: ['mailer/**', '.github/workflows/mailer.yml']
   schedule:
     - cron: '*/15 * * * *'
 
