@@ -41,4 +41,4 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          MAIL_FROM: Havenlaurals06@gmail.com
+          MAIL_FROM: andrewvijaykumar123@gmail.com
