@@ -99,6 +99,30 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(stats.hours[9], 1); assert.strictEqual(stats.hours[13], 1);
   assert.strictEqual(outbox[0].to, 'owner@example.com'); assert.ok(outbox[0].attachments[0].content.includes('LH-R00001'));
 
+  // delivery: confirm -> on the way -> delivered (no "ready" email), address carried through, bad ones rejected
+  const dd = (id, extra = {}) => doc(id, { svc: 'deliver', tbl: '', pay: 'counter', addr: '12 Test Street, Kelambakkam', lat: 12.8475, lng: 80.1964, ...extra });
+  outbox.length = 0;
+  const dOrders = [{ id: 'LH-DELIV1', data: dd('LH-DELIV1'), ts: T0 }];
+  const dSt = { 'LH-DELIV1': { s: 'accepted' } }; const dMail = {};
+  const dRun = () => lib.sweep({ store: fake(dOrders, dSt, dMail), send, LH, now: T0, log: () => {} });
+  await dRun(); assert.strictEqual(outbox.length, 1); assert.match(outbox[0].text, /Delivery to 12 Test Street/); assert.match(outbox[0].text, /Cash on delivery/);
+  dSt['LH-DELIV1'] = { s: 'ready' };
+  await dRun(); assert.strictEqual(outbox.length, 1, 'no ready email for delivery');
+  dSt['LH-DELIV1'] = { s: 'out' };
+  await dRun(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /on the way/);
+  await dRun(); assert.strictEqual(outbox.length, 2, 'on the way sent once');
+  dSt['LH-DELIV1'] = { s: 'completed' };
+  await dRun(); assert.strictEqual(outbox.length, 3); assert.match(outbox[2].subject, /delivered/);
+  await dRun(); assert.strictEqual(outbox.length, 3, 'delivered sent once');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV2', dd('LH-DELIV2', { lat: 13.5, lng: 80.2 }), T0), null, 'out of range rejected');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV3', dd('LH-DELIV3', { addr: 'x' }), T0), null, 'short address rejected');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV4', dd('LH-DELIV4', { lat: undefined }), T0), null, 'missing coordinates rejected');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV5', dd('LH-DELIV5', { p: '12345' }), T0), null, 'short phone rejected for delivery');
+  const dRows = [{ o: lib.toOrder(LH, 'LH-DELIV1', dOrders[0].data, T0), s: 'completed', v: false, r: '' }];
+  const dRep = lib.buildReport(LH, dRows);
+  assert.strictEqual(dRep.deliver, 1); assert.strictEqual(dRep.take, 0); assert.strictEqual(dRep.dine, 0);
+  assert.ok(lib.reportEmail(LH, day, dRows, null).attachments[0].content.includes('12 Test Street'));
+
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);

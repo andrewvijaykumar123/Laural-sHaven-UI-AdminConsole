@@ -12,6 +12,14 @@ The admin signs in with an Email/Password account from Firebase Authentication. 
 
 Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it from Firebase Console, Authentication, Users), then publish with `firebase deploy --only firestore:rules` or paste the file into Firebase Console, Firestore, Rules.
 
+## Home delivery and live tracking
+
+1. Publish the updated `firestore.rules` first (delivery orders are rejected until you do).
+2. Menu & stock, turn on **Home delivery**. Customers within 5 km (straight line from the cafe) can then order delivery; everyone else sees a polite "not available yet" message. Delivery is free and paid in cash on delivery or by UPI.
+3. Rider: sign in on the phone, mark the order **Out for delivery** and tap **Share location** (allow location, keep the screen on). Customers follow the rider on an OpenStreetMap map.
+
+The rider's location is stored on the order's `status/{id}` document, which anyone holding the order id can read, and is erased when the order completes. `map.js`, `map.css` and `vendor/leaflet/` are copies of the storefront files and must stay identical. Map tiles come from the public OpenStreetMap servers; keep traffic light or switch to a tile provider for heavy use.
+
 ## Rebuild the Firebase bundle
 
 ```powershell

@@ -113,12 +113,15 @@
     buildMenuAdmin();
     wireUI();
     renderAll();
+    ensureWatch();
+    renderRide();
+    setInterval(rideTick, 5000);
     LH.connect('orders');
     LH.connect('ops');
     setInterval(() => { if (!document.hidden) renderBoard(); }, 30000);
   }
 
-  const readDraft = () => { const c = LH.getCfg(); return { open: c.open, oos: new Set(c.oos), prep: c.prep, note: c.note }; };
+  const readDraft = () => { const c = LH.getCfg(); return { open: c.open, oos: new Set(c.oos), prep: c.prep, note: c.note, del: !!c.del }; };
 
   /* ---------- Realtime events ---------- */
   LH.on('order', (o) => {
@@ -132,7 +135,19 @@
   LH.on('status', ({ id, s, r, ts }) => {
     const m = meta[id] || (meta[id] = {});
     if (ts < (m.sts || 0)) return;
-    m.s = s; m.r = r; m.sts = ts; saveMeta(); scheduleRender();
+    m.s = s; m.r = r; m.sts = ts;
+    if (s !== 'out') delete m.loc;
+    saveMeta(); pruneRide(); scheduleRender();
+    if (mapId === id) drawMap();
+  });
+  LH.on('loc', ({ id, lat, lng, acc, lts }) => {
+    const m = meta[id] || (meta[id] = {});
+    if (m.s && m.s !== 'out') return;
+    if (m.loc && m.loc.lts > lts) return;
+    m.loc = { lat, lng, acc, lts: lts || Date.now() };
+    saveMeta();
+    if (mapId === id) drawMap();
+    scheduleRender();
   });
   LH.on('pay', ({ id, v, ts }) => {
     const m = meta[id] || (meta[id] = {});
@@ -179,9 +194,18 @@
 
   /* ---------- Actions ---------- */
   async function setStatus(id, s, reason = '') {
-    if (!NEXT[statusOf(id)].includes(s)) return;
-    try { await LH.publishAdmin({ k: 'st', id, s, r: reason }); fresh.delete(id); if (['accepted', 'rejected', 'ready', 'completed'].includes(s)) kickMailer(); }
-    catch (e) { toast('Could not update the order.', 'bad'); }
+    const o = orders.get(id);
+    if (!o || !LH.nextFor(o, statusOf(id)).includes(s)) return;
+    try {
+      await LH.publishAdmin({ k: 'st', id, s, r: reason });
+      fresh.delete(id);
+      if (s === 'out') {
+        // Phones start sharing at once; on a desktop the rider's phone taps "Share location" instead.
+        if (isMobileDevice()) startRide(id); else toast('Out for delivery. On the rider\'s phone, open this console and tap "Share location".', 'ok');
+      }
+      if (s === 'completed' || s === 'rejected') stopRide(id);
+      if (['accepted', 'rejected', 'ready', 'out', 'completed'].includes(s)) kickMailer();
+    } catch (e) { toast('Could not update the order.', 'bad'); }
   }
 
   /* Emails are sent by GitHub Actions. The relay (worker/relay.js) starts a run for any signed-in admin device; without it a per-device GitHub token is used, else a 15-minute schedule picks changes up. */
@@ -239,7 +263,7 @@
     clearTimeout(draftTimer);
     draftTimer = setTimeout(async () => {
       draftTimer = null;
-      try { await LH.publishAdmin({ k: 'cfg', open: draft.open, oos: [...draft.oos], prep: draft.prep, note: draft.note }); toast('Storefront updated', 'ok'); }
+      try { await LH.publishAdmin({ k: 'cfg', open: draft.open, oos: [...draft.oos], prep: draft.prep, note: draft.note, del: draft.del }); toast('Storefront updated', 'ok'); }
       catch (e) { toast('Could not publish the change.', 'bad'); }
     }, 500);
   }
@@ -255,13 +279,152 @@
 
   function printTicket(o) {
     const lines = o.it.map(([id, q]) => `${q} x ${esc(ITEMS.get(id).name)}  ${fmt(ITEMS.get(id).price * q)}`).join('<br>');
-    $('#printArea').innerHTML = `<h3>Laural's Haven</h3><p>${esc(o.id)} · ${new Date(o.ts).toLocaleString()}</p><hr>${lines}<hr><b>TOTAL ${fmt(o.total)}</b><p>${esc(o.n)} · ${esc(o.p)}<br>${o.svc === 'take' ? 'TAKEAWAY' : `DINE-IN ${esc(o.tbl)}`}<br>${o.pay === 'upi' ? 'UPI' : 'PAY AT COUNTER'}${o.nt ? `<br>NOTE: ${esc(o.nt)}` : ''}</p>`;
+    $('#printArea').innerHTML = `<h3>Laural's Haven</h3><p>${esc(o.id)} · ${new Date(o.ts).toLocaleString()}</p><hr>${lines}<hr><b>TOTAL ${fmt(o.total)}</b><p>${esc(o.n)} · ${esc(o.p)}<br>${o.svc === 'take' ? 'TAKEAWAY' : o.svc === 'deliver' ? `DELIVERY<br>${esc(o.addr)}<br>${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km` : `DINE-IN ${esc(o.tbl)}`}<br>${o.pay === 'upi' ? 'UPI' : o.svc === 'deliver' ? 'CASH ON DELIVERY' : 'PAY AT COUNTER'}${o.nt ? `<br>NOTE: ${esc(o.nt)}` : ''}</p>`;
     window.print();
   }
 
+  /* ---------- Delivery: rider location sharing and the live map ---------- */
+  const isMobileDevice = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || !!(navigator.userAgentData && navigator.userAgentData.mobile);
+  const ride = { ids: new Set(store.get('rideIds', []).filter(LH.validId)), watch: null, wake: null, fix: null, sent: null, sentAt: 0, busy: false, err: '' };
+  const saveRide = () => store.set('rideIds', [...ride.ids]);
+
+  async function keepAwake() {
+    try {
+      if ('wakeLock' in navigator && !ride.wake && !document.hidden) {
+        ride.wake = await navigator.wakeLock.request('screen');
+        ride.wake.addEventListener('release', () => { ride.wake = null; });
+      }
+    } catch (e) { /* the screen may sleep; sharing continues while the page is visible */ }
+  }
+  function stopWatch() {
+    if (ride.watch !== null) { navigator.geolocation.clearWatch(ride.watch); ride.watch = null; }
+    if (ride.wake) { ride.wake.release().catch(() => {}); ride.wake = null; }
+    ride.fix = null; ride.sent = null; ride.sentAt = 0; ride.err = '';
+  }
+  function ensureWatch() {
+    if (!ride.ids.size) { stopWatch(); return; }
+    if (ride.watch !== null) return;
+    if (!navigator.geolocation) { ride.err = 'This device cannot share its location.'; return; }
+    ride.err = '';
+    ride.watch = navigator.geolocation.watchPosition(onFix, onFixError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+    keepAwake();
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && ride.ids.size) keepAwake(); });
+
+  function onFix(pos) {
+    const c = pos.coords;
+    ride.err = '';
+    ride.fix = { lat: c.latitude, lng: c.longitude, acc: Math.round(c.accuracy || 0), t: Date.now() };
+    touch(true); // the console stays unlocked while a delivery is being tracked
+    const since = Date.now() - ride.sentAt;
+    const moved = ride.sent ? LH.distKm(ride.sent, ride.fix) * 1000 : Infinity;
+    if (!ride.busy && ((moved >= 15 && since >= 8000) || since >= 30000)) sendFix();
+    if (mapId) drawMap();
+    renderRide();
+  }
+  function onFixError(err) {
+    if (err && err.code === 1) {
+      ride.err = 'Location permission is blocked. Allow it in the browser settings so customers can follow the delivery.';
+      if (ride.watch !== null) { navigator.geolocation.clearWatch(ride.watch); ride.watch = null; }
+    } else ride.err = err && err.code === 3 ? 'GPS is slow to respond. Move to an open area.' : 'GPS signal unavailable right now.';
+    renderRide();
+  }
+  async function sendFix() {
+    const f = ride.fix;
+    if (!f || !ride.ids.size || ride.busy) return;
+    ride.busy = true;
+    try {
+      await LH.publishAdmin({ k: 'loc', ids: [...ride.ids], lat: f.lat, lng: f.lng, acc: f.acc });
+      ride.sent = { lat: f.lat, lng: f.lng }; ride.sentAt = Date.now();
+    } catch (e) { ride.err = 'Could not send the location. Retrying...'; }
+    ride.busy = false;
+    renderRide();
+  }
+  // Heartbeat: a rider standing still still counts as "live", but a lost GPS fix is not re-sent.
+  function rideTick() {
+    if (!ride.ids.size) return;
+    if (ride.watch === null && !ride.err.startsWith('Location permission')) ensureWatch();
+    if (ride.fix && Date.now() - ride.fix.t < 120000 && Date.now() - ride.sentAt >= 30000) sendFix();
+    renderRide();
+  }
+  function startRide(id) {
+    ride.ids.add(id); saveRide(); ensureWatch();
+    if (ride.fix) sendFix();
+    renderRide(); renderBoard();
+  }
+  function stopRide(id) {
+    if (!ride.ids.delete(id)) return;
+    saveRide(); ensureWatch(); renderRide(); renderBoard();
+  }
+  // Orders that are no longer "out for delivery" stop sharing automatically.
+  function pruneRide() {
+    let changed = false;
+    [...ride.ids].forEach((id) => { const m = meta[id]; if (m && m.s && m.s !== 'out') { ride.ids.delete(id); changed = true; } });
+    if (changed) { saveRide(); ensureWatch(); renderRide(); }
+  }
+  function renderRide() {
+    const bar = $('#rideBar');
+    if (!bar) return;
+    const n = ride.ids.size;
+    bar.hidden = !n;
+    if (!n) return;
+    const f = ride.fix;
+    const sent = ride.sentAt ? `${Math.round((Date.now() - ride.sentAt) / 1000)} s ago` : 'not yet';
+    const line = ride.err ? `<span class="ride-err">${esc(ride.err)}</span>` : f ? `GPS accuracy about ${f.acc} m · last sent ${sent}` : 'Waiting for GPS...';
+    bar.innerHTML = `<div><b>📡 Sharing live location</b> for ${n} delivery order${n > 1 ? 's' : ''}<br><span class="muted">${line} · Keep this screen on and the console open.</span></div><button class="btn danger sm" data-ride-stop>Stop sharing</button>`;
+  }
+
+  let mapId = null, mapCtl = null, mapToken = 0, mapUserMoved = false, mapFocus = null;
+  function riderPos(id) {
+    if (ride.ids.has(id) && ride.fix) return { lat: ride.fix.lat, lng: ride.fix.lng, lts: ride.fix.t, mine: true };
+    const m = meta[id];
+    return m && m.loc && statusOf(id) === 'out' ? { ...m.loc } : null;
+  }
+  function drawMap() {
+    const o = orders.get(mapId);
+    if (!o || $('#mapView').hidden) return;
+    const s = statusOf(o.id);
+    const p = riderPos(o.id);
+    if (mapCtl) {
+      if (p) mapCtl.setRider(p.lat, p.lng); else mapCtl.clearRider();
+      if (!mapUserMoved) mapCtl.fit();
+    }
+    const km = p ? LH.distKm(p, o) : null;
+    $('#mvSub').textContent = `${LH.statusLabel(o, s)}${p ? ` · ${km.toFixed(1)} km from customer · about ${LH.etaMin(km)} min` : ''}`;
+    $('#mvInfo').innerHTML = `<div>${p ? `🛵 ${p.mine ? 'Your location' : 'Rider'} updated ${ago(p.lts)}` : s === 'out' ? 'No rider location shared yet. Tap Share location on the rider\'s phone.' : 'Rider location appears once the order is out for delivery.'}</div><div class="muted">📍 ${esc(o.addr)}</div>`;
+  }
+  async function openMap(id) {
+    const o = orders.get(id);
+    if (!o || o.svc !== 'deliver') return;
+    mapId = id; mapUserMoved = false; mapFocus = document.activeElement;
+    $('#mapView').hidden = false;
+    $('#mvTitle').textContent = `${o.id} · ${o.n}`;
+    $('#mvNav').href = window.LHMap.navUrl(o.lat, o.lng);
+    drawMap();
+    $('#mvClose').focus();
+    const token = ++mapToken;
+    try {
+      const ctl = await window.LHMap.create($('#mvMap'), { pan: true });
+      if (token !== mapToken) { ctl.destroy(); return; }
+      mapCtl = ctl;
+      ctl.map.on('dragstart', () => { mapUserMoved = true; });
+      ctl.setDest(o.lat, o.lng);
+      drawMap();
+      ctl.fit();
+    } catch (e) { $('#mvMap').innerHTML = '<p class="muted" style="padding:24px;text-align:center">The map could not load. Use the Navigate link instead.</p>'; }
+  }
+  function closeMap() {
+    if ($('#mapView').hidden) return;
+    mapToken++; mapId = null;
+    if (mapCtl) { try { mapCtl.destroy(); } catch (e) { /* already gone */ } mapCtl = null; }
+    $('#mvMap').innerHTML = '';
+    $('#mapView').hidden = true;
+    if (mapFocus && mapFocus.focus) mapFocus.focus();
+  }
+
   /* ---------- Board ---------- */
-  const COLS = ['pending', 'accepted', 'cooking', 'ready', 'completed'];
-  const COL_TITLE = { pending: 'New', accepted: 'Accepted', cooking: 'Cooking', ready: 'Ready', completed: 'Completed today' };
+  const COLS = ['pending', 'accepted', 'cooking', 'ready', 'out', 'completed'];
+  const COL_TITLE = { pending: 'New', accepted: 'Accepted', cooking: 'Cooking', ready: 'Ready', out: 'On the way', completed: 'Completed today' };
   const ago = (ts) => { const m = Math.max(0, Math.floor((LH.now() - ts) / 60000)); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)}h ${m % 60}m ago`; };
   const ACTION = {
     pending: [['accepted', 'Accept', ''], ['reject', 'Reject', 'bad']],
@@ -269,19 +432,30 @@
     cooking: [['ready', 'Mark ready', '']],
     ready: [['completed', 'Complete', '']]
   };
+  function actionsFor(o, s) {
+    if (o.svc === 'deliver') {
+      if (s === 'ready') return [['out', 'Out for delivery', '']];
+      if (s === 'out') return [['completed', 'Delivered', ''], ['ride', ride.ids.has(o.id) ? '⏹ Stop sharing' : '📡 Share location', 'sec']];
+    }
+    return ACTION[s] || [];
+  }
 
   function cardHTML(o) {
     const s = statusOf(o.id);
     const m = meta[o.id] || {};
     const late = s === 'pending' && Date.now() - o.ts > 5 * 60000;
-    return `<article class="ocard ${fresh.has(o.id) ? 'fresh' : ''}" draggable="${NEXT[s].length ? 'true' : 'false'}" data-id="${esc(o.id)}" style="--c:${STATUS[s].color}">
+    const del = o.svc === 'deliver';
+    const svcChip = o.svc === 'take' ? 'Takeaway' : del ? `🛵 Delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km` : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`;
+    const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">📡 Live map</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
+    return `<article class="ocard ${fresh.has(o.id) ? 'fresh' : ''}" draggable="${LH.nextFor(o, s).length ? 'true' : 'false'}" data-id="${esc(o.id)}" style="--c:${STATUS[s].color}">
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
       <div class="oc-cust"><b>${esc(o.n)}</b><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>
-      <div class="chips"><span class="chip">${o.svc === 'take' ? 'Takeaway' : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`}</span>
-        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : 'Pay at counter'}</span>${o.em ? '<span class="chip ok" title="Customer gets email updates">✉ Email</span>' : ''}</div>
+      <div class="chips"><span class="chip ${del ? 'del' : ''}">${svcChip}</span>
+        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : del ? 'Cash on delivery' : 'Pay at counter'}</span>${o.em ? '<span class="chip ok" title="Customer gets email updates">✉ Email</span>' : ''}</div>
+      ${where}
       <ul class="oc-items">${o.it.map(([id, q]) => `<li><b>${q}×</b>${esc(ITEMS.get(id).name)}</li>`).join('')}</ul>
       ${o.nt ? `<div class="note">📝 ${esc(o.nt)}</div>` : ''}
-      <div class="oc-foot"><strong>${fmt(o.total)}</strong><div class="acts">${(ACTION[s] || []).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('')}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div></div>
+      <div class="oc-foot"><strong>${fmt(o.total)}</strong><div class="acts">${actionsFor(o, s).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('')}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div></div>
       ${o.pay === 'upi' && !['rejected'].includes(s) ? `<button class="pay-btn" data-act="pay">${m.v ? 'Undo payment verified' : 'Mark payment verified'}</button>` : ''}
     </article>`;
   }
@@ -289,7 +463,9 @@
   function renderBoard() {
     const today = startOfToday();
     const all = [...orders.values()].sort((a, b) => a.ts - b.ts);
-    $('#board').innerHTML = COLS.map((s) => {
+    // The "On the way" column only appears once delivery is on or has been used.
+    const cols = COLS.filter((s) => s !== 'out' || (draft && draft.del) || all.some((o) => o.svc === 'deliver'));
+    $('#board').innerHTML = cols.map((s) => {
       let list = all.filter((o) => statusOf(o.id) === s);
       if (s === 'completed') list = list.filter((o) => o.ts >= today).reverse().slice(0, 25);
       return `<section class="col" data-status="${s}" style="--c:${STATUS[s].color}"><header><i></i>${COL_TITLE[s]}<em>${list.length}</em></header>
@@ -305,6 +481,8 @@
     if (act === 'reject') askReject(id);
     else if (act === 'print') printTicket(orders.get(id));
     else if (act === 'pay') togglePay(id);
+    else if (act === 'map') openMap(id);
+    else if (act === 'ride') { if (ride.ids.has(id)) stopRide(id); else startRide(id); }
     else setStatus(id, act);
   });
   $('#board').addEventListener('dragstart', (e) => {
@@ -322,7 +500,7 @@
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
     if (orders.has(id)) {
-      if (NEXT[statusOf(id)].includes(col.dataset.status)) setStatus(id, col.dataset.status);
+      if (LH.nextFor(orders.get(id), statusOf(id)).includes(col.dataset.status)) setStatus(id, col.dataset.status);
       else toast('Move orders forward one step at a time.', 'bad');
     }
     renderBoard();
@@ -377,10 +555,10 @@
     valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + it.price * q; }));
     $('#topItems').innerHTML = rank(Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8), (v) => `${v}×`);
     $('#catSplit').innerHTML = rank(Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8), fmt);
-    const mix = {}; all.forEach((o) => { const l = STATUS[statusOf(o.id)].label; mix[l] = (mix[l] || 0) + 1; });
+    const mix = {}; all.forEach((o) => { const l = LH.statusLabel(o, statusOf(o.id)); mix[l] = (mix[l] || 0) + 1; });
     $('#statusMix').innerHTML = rank(Object.entries(mix).sort((a, b) => b[1] - a[1]), (v) => v);
-    const sv = { 'Dine-in': 0, Takeaway: 0, 'UPI': 0, 'Pay at counter': 0 };
-    all.forEach((o) => { sv[o.svc === 'take' ? 'Takeaway' : 'Dine-in']++; sv[o.pay === 'upi' ? 'UPI' : 'Pay at counter']++; });
+    const sv = { 'Dine-in': 0, Takeaway: 0, Delivery: 0, 'UPI': 0, 'Cash / counter': 0 };
+    all.forEach((o) => { sv[o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? 'Delivery' : 'Dine-in']++; sv[o.pay === 'upi' ? 'UPI' : 'Cash / counter']++; });
     $('#svcMix').innerHTML = rank(Object.entries(sv), (v) => v);
   }
 
@@ -389,21 +567,21 @@
     const q = $('#histSearch').value.trim().toLowerCase();
     const st = $('#histStatus').value;
     const rows = [...orders.values()].sort((a, b) => b.ts - a.ts)
-      .filter((o) => (!st || statusOf(o.id) === st) && (!q || `${o.id} ${o.n} ${o.p} ${o.em}`.toLowerCase().includes(q))).slice(0, 300);
+      .filter((o) => (!st || statusOf(o.id) === st) && (!q || `${o.id} ${o.n} ${o.p} ${o.em} ${o.addr || ''}`.toLowerCase().includes(q))).slice(0, 300);
     $('#histBody').innerHTML = rows.length ? rows.map((o) => {
       const s = statusOf(o.id); const m = meta[o.id] || {};
       return `<tr><td class="oid">${esc(o.id)}</td><td>${new Date(o.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
-        <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span></td>
+        <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span>${o.svc === 'deliver' ? `<br><span class="muted">🛵 ${esc(o.addr)}</span>` : ''}</td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
-        <td><b>${fmt(o.total)}</b></td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : 'Counter'}</td>
-        <td><span class="badge" style="background:${STATUS[s].color}">${STATUS[s].label}</span>${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
+        <td><b>${fmt(o.total)}</b></td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
+        <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span>${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
     }).join('') : '<tr><td colspan="7" class="muted" style="padding:30px;text-align:center">No orders found.</td></tr>';
   }
 
   const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
   function exportCsv() {
-    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note'];
-    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt]);
+    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note', 'Address', 'Latitude', 'Longitude'];
+    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt, o.addr || '', o.lat ?? '', o.lng ?? '']);
     const blob = new Blob([[head, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `lauralshaven-orders-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -422,6 +600,8 @@
     $('#openToggle').checked = draft.open;
     $('#openLbl').textContent = draft.open ? 'Open' : 'Closed';
     $('#prepVal').textContent = draft.prep;
+    $('#delToggle').checked = draft.del;
+    $('#delLbl').textContent = draft.del ? 'On' : 'Off';
     if (document.activeElement !== $('#noteInput')) $('#noteInput').value = draft.note;
     $$('[data-item]').forEach((cb) => { cb.checked = !draft.oos.has(cb.dataset.item); $(`.mitem[data-id="${cb.dataset.item}"]`).classList.toggle('out', draft.oos.has(cb.dataset.item)); });
     $('#oosCount').textContent = draft.oos.size ? `${draft.oos.size} item(s) sold out` : 'Everything is available';
@@ -472,6 +652,11 @@
     $('#exportCsv2').addEventListener('click', exportCsv);
 
     $('#openToggle').addEventListener('change', (e) => { draft.open = e.target.checked; renderConfig(); pushConfig(); });
+    $('#delToggle').addEventListener('change', (e) => { draft.del = e.target.checked; renderConfig(); renderBoard(); pushConfig(); });
+    $('#mvClose').addEventListener('click', closeMap);
+    $('#mvFit').addEventListener('click', () => { mapUserMoved = false; if (mapCtl) mapCtl.fit(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMap(); });
+    $('#rideBar').addEventListener('click', (e) => { if (e.target.closest('[data-ride-stop]')) { ride.ids.clear(); saveRide(); ensureWatch(); renderRide(); renderBoard(); } });
     $('#prepDec').addEventListener('click', () => { draft.prep = Math.max(1, draft.prep - 1); renderConfig(); pushConfig(); });
     $('#prepInc').addEventListener('click', () => { draft.prep = Math.min(180, draft.prep + 1); renderConfig(); pushConfig(); });
     $('#noteInput').addEventListener('input', (e) => { draft.note = LH.clean(e.target.value, 120); pushConfig(); });

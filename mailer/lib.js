@@ -22,7 +22,7 @@ function loadCore() {
 /* ---------- Orders ---------- */
 function toOrder(LH, id, d, tsMs) {
   const it = (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; });
-  const o = LH.validateOrder({ id, ts: tsMs, n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, it });
+  const o = LH.validateOrder({ id, ts: tsMs, n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, it });
   if (o && Number.isInteger(d.total) && d.total > 0) o.total = d.total;
   return o;
 }
@@ -48,8 +48,8 @@ function itemsTable(LH, o) {
 <tr><td style="padding-top:10px;font-weight:700">Total</td><td align="right" style="padding-top:10px;font-weight:700">${LH.esc(LH.fmt(o.total))}</td></tr></table>`;
 }
 
-const where = (o) => (o.svc === 'take' ? 'Takeaway' : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
-const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : 'Pay at the counter');
+const where = (o) => (o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? `Delivery to ${o.addr}` : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
+const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
 const textItems = (LH, o) => o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`).join('\n');
 
 function confirmEmail(LH, o, ctx = {}) {
@@ -59,8 +59,17 @@ function confirmEmail(LH, o, ctx = {}) {
 ${itemsTable(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, ctx.paid))}<br>Placed ${LH.esc(new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' '))} IST</p>
 ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">We will email you again when it is ready.</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\nWe will email you again when it is ready.\n- ${SHOP}`;
+<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${o.svc === 'deliver' ? 'We will email you when it is on the way. You can also follow the rider live on our website.' : 'We will email you again when it is ready.'}</p>`);
+  const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\n${o.svc === 'deliver' ? 'We will email you when it is on the way.' : 'We will email you again when it is ready.'}\n- ${SHOP}`;
+  return { subject, html, text };
+}
+
+function outEmail(LH, o) {
+  const subject = `Order ${o.id} is on the way - ${SHOP}`;
+  const html = shell(LH, 'Out for delivery', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is out for delivery to ${LH.esc(o.addr)}.</p>
+${itemsTable(LH, o)}
+<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(payLine(o, false))}. Open our website on the device you ordered from to follow the rider live on the map.</p>`);
+  const text = `Hi ${o.n}, your order ${o.id} is out for delivery to ${o.addr}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n${payLine(o, false)}\n\nOpen our website on the device you ordered from to follow the rider live.\n- ${SHOP}`;
   return { subject, html, text };
 }
 
@@ -75,11 +84,12 @@ ${itemsTable(LH, o)}
 }
 
 function doneEmail(LH, o) {
-  const subject = `Order ${o.id} is complete - ${SHOP}`;
-  const html = shell(LH, 'Your order is complete', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is complete. We hope you enjoyed it.</p>
+  const del = o.svc === 'deliver';
+  const subject = `Order ${o.id} is ${del ? 'delivered' : 'complete'} - ${SHOP}`;
+  const html = shell(LH, del ? 'Your order was delivered' : 'Your order is complete', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.</p>
 ${itemsTable(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}. We look forward to seeing you again.</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is complete. We hope you enjoyed it.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
+  const text = `Hi ${o.n}, your order ${o.id} is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
   return { subject, html, text };
 }
 
@@ -112,8 +122,10 @@ async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = c
     if (s === 'rejected') { if (!mail.x) jobs.push(['x', rejectEmail(LH, o, st.r)]); }
     else {
       if (!mail.c && s !== 'pending') jobs.push(['c', confirmEmail(LH, o, { prep: cfg.prep, paid: !!st.v })]);
+      const del = o.svc === 'deliver';
       const needR = !mail.r || mail.r === -1;
-      if (needR && s === 'ready') jobs.push(['r', readyEmail(LH, o)]);
+      if (del && !mail.o && s === 'out') jobs.push(['o', outEmail(LH, o)]);
+      if (needR && s === 'ready' && !del) jobs.push(['r', readyEmail(LH, o)]);
       if (needR && s === 'completed') jobs.push(['r', doneEmail(LH, o)]);
     }
 
@@ -167,7 +179,9 @@ function buildReport(LH, rows) {
   r.upiUnverified = upi.filter((x) => !x.v);
   const ctr = valid.filter((x) => x.o.pay === 'counter');
   r.counterN = ctr.length; r.counterAmt = sum(ctr);
-  r.dine = valid.filter((x) => x.o.svc === 'dine').length; r.take = valid.length - r.dine;
+  r.dine = valid.filter((x) => x.o.svc === 'dine').length;
+  r.deliver = valid.filter((x) => x.o.svc === 'deliver').length;
+  r.take = valid.length - r.dine - r.deliver;
   const qty = {}; const rev = {}; const cat = {};
   valid.forEach(({ o }) => o.it.forEach(([id, q]) => {
     const it = LH.ITEMS.get(id);
@@ -188,11 +202,10 @@ function buildReport(LH, rows) {
 
 const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
 function reportCsv(LH, rows) {
-  const head = ['Order', 'Time (IST)', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Reason', 'Note'];
+  const head = ['Order', 'Time (IST)', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Reason', 'Note', 'Address', 'Latitude', 'Longitude'];
   const body = [...rows].sort((a, b) => a.o.ts - b.o.ts).map(({ o, s, v, r }) => [
     o.id, new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' '), o.n, o.p, o.em, o.svc, o.tbl,
-    o.it.map(([id, q]) => `${q}x ${LH.ITEMS.get(id).name}`).join('; '), o.total, o.pay, v ? 'yes' : 'no', s, r || '', o.nt
-  ]);
+    o.it.map(([id, q]) => `${q}x ${LH.ITEMS.get(id).name}`).join('; '), o.total, o.pay, v ? 'yes' : 'no', s, r || '', o.nt, o.addr || '', o.lat ?? '', o.lng ?? ''  ]);
   return [head, ...body].map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
 
@@ -210,7 +223,7 @@ function reportEmail(LH, day, rows, prev) {
   const inner = `<table role="presentation" width="100%" cellpadding="6" cellspacing="6"><tr>${card('Sales', f(r.sales), `${r.validCount} orders${delta}`)}${card('Avg ticket', f(r.avg), 'per order')}</tr><tr>${card('Completed', r.completed, `of ${r.placed} placed`)}${card('Rejected', r.rejected, 'not served')}</tr></table>
 ${h('Payments')}${table([['UPI verified', `${r.upiPaidN} orders`, f(r.upiPaid)], ['UPI not yet verified', `${r.upiUnverified.length} orders`, f(r.upiUnverified.reduce((t, x) => t + x.o.total, 0))], ['Pay at counter', `${r.counterN} orders`, f(r.counterAmt)]], ['l', 'r', 'r'])}
 ${r.upiUnverified.length ? `${h('UPI payments to verify')}${table(r.upiUnverified.map((x) => [x.o.id, x.o.n, x.o.p, f(x.o.total)]), ['l', 'l', 'l', 'r'])}` : ''}
-${h('Service')}${table([['Dine-in', `${r.dine} orders`], ['Takeaway', `${r.take} orders`]], ['l', 'r'])}
+${h('Service')}${table([['Dine-in', `${r.dine} orders`], ['Takeaway', `${r.take} orders`], ['Delivery', `${r.deliver} orders`]], ['l', 'r'])}
 ${h('Top sellers')}${table(r.top.map(([n, q, v]) => [n, `${q}x`, f(v)]), ['l', 'r', 'r'])}
 ${h('Revenue by category')}${table(r.cats.map(([n, v]) => [n, f(v)]), ['l', 'r'])}
 ${h('Orders by hour (IST)')}${hourRows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${hourRows}</table>${r.peak >= 0 ? `<p style="margin:6px 0 0;font-size:12px;color:#6b7280">Busiest hour: ${pad(r.peak)}:00</p>` : ''}` : '<p style="margin:0;font-size:13px;color:#6b7280">No orders</p>'}
@@ -246,4 +259,4 @@ async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   return msg.stats;
 }
 
-module.exports = { loadCore, toOrder, confirmEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
+module.exports = { loadCore, toOrder, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };

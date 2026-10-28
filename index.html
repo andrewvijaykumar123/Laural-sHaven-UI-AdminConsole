@@ -6,12 +6,12 @@
   <title>Laural's Haven | Admin Console</title>
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#0b1020">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://api.github.com https://*.workers.dev; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self' https://*.googleapis.com https://api.github.com https://*.workers.dev; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261028a">
+  <link rel="stylesheet" href="styles.css?v=20261029a">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -54,6 +54,7 @@
       </header>
 
       <section class="tab on" id="tab-orders">
+        <div class="ride-bar" id="rideBar" hidden role="status"></div>
         <div class="kpis" id="kpis"></div>
         <div class="board" id="board"></div>
       </section>
@@ -71,6 +72,8 @@
 
       <section class="tab" id="tab-menu">
         <div class="panel cfg-panel">
+          <div class="cfg-row"><div><h3>Home delivery</h3><p>Customers within 5 km of the cafe can order delivery and follow it live on the map. Turn on only after the new Firestore rules are published.</p></div>
+            <label class="switch big"><input type="checkbox" id="delToggle"><span class="track"></span><span class="lbl" id="delLbl">Off</span></label></div>
           <div class="cfg-row"><div><h3>Prep time</h3><p>Shown to customers as the average wait.</p></div>
             <div class="stepper"><button id="prepDec" aria-label="Decrease">−</button><b id="prepVal">12</b><span>min</span><button id="prepInc" aria-label="Increase">+</button></div></div>
           <div class="cfg-row"><div><h3>Storefront announcement</h3><p>A banner on the ordering page (offers, delays...).</p></div>
@@ -111,12 +114,18 @@
   </div>
 
   <div id="printArea"></div>
+  <div class="mapview" id="mapView" hidden role="dialog" aria-modal="true" aria-labelledby="mvTitle">
+    <header><button class="icon-btn" id="mvClose" aria-label="Close map">✕</button><div><h3 id="mvTitle">Delivery</h3><p id="mvSub" class="muted"></p></div></header>
+    <div class="mv-map"><div class="lh-map tall" id="mvMap"></div></div>
+    <footer><div id="mvInfo" aria-live="polite"></div><div class="acts"><a class="btn primary sm" id="mvNav" href="#" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button class="btn ghost sm" id="mvFit">Show everything</button></div></footer>
+  </div>
   <div class="modal" id="modal" hidden role="dialog" aria-modal="true"><div class="modal-card" id="modalCard"></div></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
-  <script src="core.js?v=20261028a"></script>
-  <script src="app.js?v=20261028g"></script>
+  <script src="core.js?v=20261029a"></script>
+  <script src="map.js?v=20261029a"></script>
+  <script src="app.js?v=20261029a"></script>
 </body>
 </html>

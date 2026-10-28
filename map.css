@@ -1,0 +1,14 @@
+/* Shared map styling (loaded together with Leaflet). Identical in storefront and admin console. */
+.lh-map{position:relative;width:100%;height:15rem;border-radius:0.875rem;overflow:hidden;border:1px solid var(--line);background:#e8e4dc;isolation:isolate;z-index:0}
+.lh-map.tall{height:100%;min-height:16rem;border-radius:0;border:0}
+.lh-map .leaflet-container{font-family:var(--font,system-ui,sans-serif);background:#e8e4dc}
+.lh-pin{background:none;border:0}
+.lh-pin span{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:#fff;border:2px solid #ff7a45;box-shadow:0 0.25rem 0.75rem rgba(0,0,0,.35);font-size:1.1rem;line-height:1}
+.lh-pin.me span{border-color:#ef4444;animation:lhdrop .35s cubic-bezier(.3,1.5,.5,1)}
+.lh-pin.home span{border-color:#ef4444}
+.lh-pin.shop span{border-color:#10b981}
+.lh-pin.rider span{border-color:#8b5cf6;font-size:1.3rem;animation:lhpulse 1.8s infinite}
+@keyframes lhdrop{from{transform:translateY(-1rem) scale(.6);opacity:0}}
+@keyframes lhpulse{0%{box-shadow:0 0 0 0 rgba(139,92,246,.6)}100%{box-shadow:0 0 0 0.9rem rgba(139,92,246,0)}}
+.lh-map .leaflet-control-attribution{font-size:.62rem}
+@media (prefers-reduced-motion:reduce){.lh-pin span{animation:none!important}}

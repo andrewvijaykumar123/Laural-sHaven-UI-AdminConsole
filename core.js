@@ -83,10 +83,30 @@
     accepted: { label: 'Accepted', short: 'Accepted', color: '#3b82f6', step: 1 },
     cooking: { label: 'Cooking', short: 'Cooking', color: '#f97316', step: 2 },
     ready: { label: 'Ready', short: 'Ready', color: '#10b981', step: 3 },
-    completed: { label: 'Completed', short: 'Done', color: '#22c55e', step: 4 },
+    out: { label: 'Out for delivery', short: 'On the way', color: '#8b5cf6', step: 4 },
+    completed: { label: 'Completed', short: 'Done', color: '#22c55e', step: 5 },
     rejected: { label: 'Rejected', short: 'Rejected', color: '#ef4444', step: -1 }
   };
-  const NEXT = { pending: ['accepted', 'rejected'], accepted: ['cooking', 'rejected'], cooking: ['ready'], ready: ['completed'], completed: [], rejected: [] };
+  const NEXT = { pending: ['accepted', 'rejected'], accepted: ['cooking', 'rejected'], cooking: ['ready'], ready: ['completed', 'out'], out: ['completed'], completed: [], rejected: [] };
+  // 'Out for delivery' only exists for delivery orders.
+  const nextFor = (o, s) => (NEXT[s] || []).filter((x) => x !== 'out' || (o && o.svc === 'deliver'));
+  const statusLabel = (o, s) => (o && o.svc === 'deliver' && s === 'completed' ? 'Delivered' : (STATUS[s] || STATUS.pending).label);
+
+  /* ---------- Delivery area: straight-line distance from the cafe ---------- */
+  const SHOP = { lat: 12.847503004009383, lng: 80.19645821775838 };
+  const DELIVERY_KM = 5;
+  const validPoint = (lat, lng) => typeof lat === 'number' && typeof lng === 'number' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && Number.isFinite(lat) && Number.isFinite(lng);
+  const distKm = (a, b) => {
+    const rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+    return 12742 * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  const fromShopKm = (lat, lng) => distKm(SHOP, { lat, lng });
+  const inRange = (lat, lng) => validPoint(lat, lng) && fromShopKm(lat, lng) <= DELIVERY_KM;
+  // Rough ride time: roads are about 1.35x the straight line, at about 22 km/h through traffic.
+  const etaMin = (km) => Math.max(1, Math.round((km * 1.35 / 22) * 60));
+  const r5 = (n) => Math.round(n * 1e5) / 1e5;
 
   /* ---------- Helpers ---------- */
   const fmt = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
@@ -138,19 +158,26 @@
     if (!it.length) return null;
     const name = clean(o.n, 40);
     const phone = String(o.p ?? '').replace(/[^\d+]/g, '').slice(0, 15);
-    if (!name || phone.replace(/\D/g, '').length < 7) return null;
+    const svc = o.svc === 'take' ? 'take' : o.svc === 'deliver' ? 'deliver' : 'dine';
+    if (!name || phone.replace(/\D/g, '').length < (svc === 'deliver' ? 10 : 7)) return null;
     let ts = Number(o.ts);
     if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
     const em = clean(o.em, 80).toLowerCase();
-    return {
+    const out = {
       id: o.id, ts, n: name, p: phone, em: EMAIL_RE.test(em) ? em : '', nt: clean(o.nt, 140), it, total,
-      pay: o.pay === 'counter' ? 'counter' : 'upi', svc: o.svc === 'take' ? 'take' : 'dine', tbl: clean(o.tbl, 8)
+      pay: o.pay === 'counter' ? 'counter' : 'upi', svc, tbl: svc === 'dine' ? clean(o.tbl, 8) : ''
     };
+    if (svc === 'deliver') {
+      const addr = clean(o.addr, 200);
+      if (addr.length < 8 || !inRange(o.lat, o.lng)) return null;
+      Object.assign(out, { addr, lat: r5(o.lat), lng: r5(o.lng) });
+    }
+    return out;
   }
 
 
   /* ---------- Config shared by the admin (store open, sold-out items, prep time) ---------- */
-  let cfg = { open: true, oos: [], prep: 12, note: '', ts: 0 };
+  let cfg = { open: true, oos: [], prep: 12, note: '', del: false, ts: 0 };
   let lastClr = 0;
 
   /* ---------- Firebase ---------- */
@@ -210,9 +237,10 @@
     return Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
 
-  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl });
+  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl, ...(o.svc === 'deliver' ? { addr: o.addr, lat: o.lat, lng: o.lng } : {}) });
   const fromDoc = (d) => validateOrder({
     id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
+    addr: d.addr, lat: d.lat, lng: d.lng,
     it: (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
   });
 
@@ -250,7 +278,15 @@
     const ts = now();
     if (f.k === 'st') {
       if (!validId(f.id) || !STATUS[f.s]) throw new Error('Invalid status');
-      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts }, { merge: true }));
+      // A finished order stops exposing the rider's position.
+      const wipe = f.s === 'completed' || f.s === 'rejected' ? { lat: null, lng: null, acc: null, lts: null } : {};
+      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...wipe }, { merge: true }));
+    }
+    if (f.k === 'loc') {
+      const ids = (Array.isArray(f.ids) ? f.ids : [f.id]).filter(validId).slice(0, 10);
+      if (!ids.length || !validPoint(f.lat, f.lng)) throw new Error('Invalid location');
+      const acc = Math.min(9999, Math.max(0, Math.round(Number(f.acc)) || 0));
+      return write(Promise.all(ids.map((id) => FB.setDoc(FB.doc(db, 'status', id), { lat: r5(f.lat), lng: r5(f.lng), acc, lts: ts, u: ts }, { merge: true }))));
     }
     if (f.k === 'pv') {
       if (!validId(f.id)) throw new Error('Invalid order');
@@ -259,7 +295,7 @@
     if (f.k === 'cfg') {
       return write(FB.setDoc(FB.doc(db, 'config', 'store'), {
         open: !!f.open, oos: (Array.isArray(f.oos) ? f.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
-        prep: Math.min(180, Math.max(1, Math.floor(Number(f.prep)) || 12)), note: clean(f.note, 120), ts
+        prep: Math.min(180, Math.max(1, Math.floor(Number(f.prep)) || 12)), note: clean(f.note, 120), del: f.del === true, ts
       }, { merge: true }));
     }
     if (f.k === 'clr') return clearBoard(ts);
@@ -273,18 +309,25 @@
     if (d.open === undefined || ts < cfg.ts) return;
     cfg = {
       open: !!d.open, oos: (Array.isArray(d.oos) ? d.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
-      prep: Math.min(180, Math.max(1, Math.floor(Number(d.prep)) || 12)), note: clean(d.note, 120), ts
+      prep: Math.min(180, Math.max(1, Math.floor(Number(d.prep)) || 12)), note: clean(d.note, 120), del: d.del === true, ts
     };
     store.set('cfg', cfg);
     emit('cfg', cfg);
   }
 
+  const lastStatus = new Map();
   function emitStatus(id, d) {
     if (typeof d.s === 'string' && STATUS[d.s]) {
       finalStatus.set(id, d.s === 'completed' || d.s === 'rejected');
-      emit('status', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
+      // Rider location updates rewrite the same document; only announce real status changes.
+      const key = `${d.s}|${Number(d.ts) || 0}|${d.r || ''}`;
+      if (lastStatus.get(id) !== key) {
+        lastStatus.set(id, key);
+        emit('status', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
+      }
     }
     if (typeof d.v === 'boolean') emit('pay', { id, v: d.v, ts: Number(d.pts) || 0 });
+    if (validPoint(d.lat, d.lng)) emit('loc', { id, lat: d.lat, lng: d.lng, acc: Number(d.acc) || 0, lts: Number(d.lts) || 0 });
   }
 
   /* ---------- Streams ---------- */
@@ -373,7 +416,8 @@
   }
 
   window.LH = {
-    UPI, MENU, ITEMS, STATUS, NEXT,
+    UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
+    SHOP, DELIVERY_KM, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, priceLines, validateOrder,
     store, now, on, emit, init, connect, watch, flush,
     publishOrder, publishAdmin, admin: adminAuth,
