@@ -140,10 +140,11 @@
     if (Date.now() - o.ts < MAIL_FRESH_MS) mailOrder(o.id);
     scheduleRender();
   });
-  LH.on('status', ({ id, s, r, ts }) => {
+  LH.on('status', ({ id, s, r, ts, how }) => {
     const m = meta[id] || (meta[id] = {});
     if (ts < (m.sts || 0)) return;
     m.s = s; m.r = r; m.sts = ts;
+    if (how) m.how = how; else delete m.how;
     if (s !== 'out') delete m.loc;
     saveMeta(); pruneRide(); scheduleRender();
     if (Date.now() - ts < MAIL_FRESH_MS) mailOrder(id);
@@ -200,11 +201,13 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = baseTitle; });
 
   /* ---------- Actions ---------- */
-  async function setStatus(id, s, reason = '') {
+  async function setStatus(id, s, reason = '', how = '') {
     const o = orders.get(id);
     if (!o || !LH.nextFor(o, statusOf(id)).includes(s)) return;
+    // A delivery is only closed with the customer's code (or by an explicit manual close), whichever way the card was moved.
+    if (o.svc === 'deliver' && s === 'completed' && !how) { askDeliveryClose(id); return; }
     try {
-      await LH.publishAdmin({ k: 'st', id, s, r: reason });
+      await LH.publishAdmin({ k: 'st', id, s, r: reason, how });
       fresh.delete(id);
       if (s === 'out') {
         // Phones start sharing at once; on a desktop the rider's phone taps "Share location" instead.
@@ -348,6 +351,72 @@
     }, 500);
   }
 
+  /* Delivery code check. Wrong codes are counted per order; after 5 the code entry is locked for 5 minutes (manual close stays available). */
+  const OTP_MAX = 5, OTP_LOCK_MS = 5 * 60000;
+  const otpTry = store.get('otpTry', {});
+  const saveOtpTry = () => {
+    const ids = Object.keys(otpTry);
+    if (ids.length > 200) ids.slice(0, ids.length - 200).forEach((k) => delete otpTry[k]);
+    store.set('otpTry', otpTry);
+  };
+  const otpLockLeft = (id) => Math.max(0, ((otpTry[id] && otpTry[id].until) || 0) - Date.now());
+
+  function askDeliveryClose(id, manualOnly = false) {
+    const o = orders.get(id);
+    if (!o || o.svc !== 'deliver' || statusOf(id) !== 'out') return;
+    const coded = LH.validOtp(o.otp);
+    const manualView = () => {
+      openModal(`<h3>Close ${esc(id)} manually?</h3><p class="muted" style="margin-bottom:16px">Use this only when the order has been handed over but the customer cannot give the code. It is recorded as closed manually.</p>
+        <button class="btn primary" id="manualYes" style="width:100%;margin-bottom:8px">Yes, mark as delivered</button>
+        <button class="btn ghost" id="manualBack" style="width:100%">${coded && !manualOnly ? 'Back to code' : 'Cancel'}</button>`);
+      $('#manualYes').onclick = () => { closeModal(); setStatus(id, 'completed', '', 'manual'); };
+      $('#manualBack').onclick = () => { if (coded && !manualOnly) codeView(); else closeModal(); };
+    };
+    const codeView = () => {
+      openModal(`<h3>Deliver ${esc(id)}</h3>
+        <p class="muted" style="margin-bottom:12px">Ask the customer for the 4-digit delivery code (in their app and order email) and enter it here.</p>
+        <form id="otpForm" autocomplete="off" novalidate>
+          <input id="otpIn" class="otp-in" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" aria-label="Delivery code" placeholder="0000">
+          <p class="otp-msg" id="otpMsg" role="alert"></p>
+          <button class="btn primary" id="otpGo" type="submit" style="width:100%;margin-bottom:8px">Verify and mark delivered</button>
+        </form>
+        <button class="btn ghost" id="manualOpen" style="width:100%;margin-bottom:8px">Close manually</button>
+        <button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
+      const input = $('#otpIn'), msg = $('#otpMsg'), go = $('#otpGo');
+      const paint = () => {
+        const left = otpLockLeft(id);
+        input.disabled = go.disabled = left > 0;
+        if (left > 0) msg.textContent = `Too many wrong codes. Try again in ${Math.ceil(left / 60000)} min, or close manually.`;
+        return left > 0;
+      };
+      input.addEventListener('input', () => { input.value = input.value.replace(/\D/g, '').slice(0, 4); msg.textContent = ''; });
+      $('#manualOpen').onclick = manualView;
+      $('#otpForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (paint()) return;
+        const code = input.value;
+        if (!LH.validOtp(code)) { msg.textContent = 'Enter the 4-digit code.'; input.focus(); return; }
+        if (code === o.otp) {
+          delete otpTry[id]; saveOtpTry();
+          closeModal();
+          setStatus(id, 'completed', '', 'otp');
+          return;
+        }
+        const t = otpTry[id] || (otpTry[id] = { n: 0, until: 0 });
+        t.n++;
+        if (t.n >= OTP_MAX) { t.n = 0; t.until = Date.now() + OTP_LOCK_MS; }
+        saveOtpTry();
+        input.value = '';
+        if (!paint()) msg.textContent = `That code is not correct. ${OTP_MAX - t.n} attempt${OTP_MAX - t.n === 1 ? '' : 's'} left.`;
+        const card = $('#modalCard'); card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+      });
+      if (!paint()) input.focus();
+    };
+    $('#modalCard').onclick = null;
+    if (coded && !manualOnly) codeView(); else manualView();
+    if (!coded) { const p = $('#modalCard p'); if (p) p.insertAdjacentHTML('afterbegin', '<b>This order has no delivery code.</b> '); }
+  }
+
   function askReject(id) {
     const reasons = ['Item out of stock', 'Kitchen is too busy', 'Closing soon', 'Payment not received', 'Unable to fulfil this order'];
     openModal(`<h3>Reject order ${esc(id)}</h3><div class="reason-list">${reasons.map((r) => `<button data-reject="${esc(r)}">${esc(r)}</button>`).join('')}</div><button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
@@ -484,13 +553,22 @@
     return `<h3>In progress <em>${act.length}</em></h3>${act.length ? act.map(row).join('') : '<p class="muted">No deliveries in progress.</p>'}${done.length ? `<h3>Finished today <em>${done.length}</em></h3>${done.map(row).join('')}` : ''}`;
   }
 
+  /* How a finished delivery was closed: with the customer's code or by hand. */
+  const closedChip = (o, s) => {
+    const how = (meta[o.id] || {}).how;
+    if (o.svc !== 'deliver' || s !== 'completed') return '';
+    return how === 'otp' ? ' <span class="chip ok">🔐 Code verified</span>' : how === 'manual' ? ' <span class="chip warn">✋ Closed manually</span>' : '';
+  };
+  const codeChip = (o, s) => (o.svc === 'deliver' && !['completed', 'rejected'].includes(s)
+    ? (LH.validOtp(o.otp) ? '<span class="chip ok" title="The customer has a delivery code">🔐 Code</span>' : '<span class="chip warn" title="No delivery code: close manually">No code</span>') : '');
+
   function dvInfoHTML(o) {
     if (!o) return '<p class="muted">Delivery orders appear here with the customer\'s location on the map.</p>';
     const s = statusOf(o.id), m = meta[o.id] || {}, p = riderPos(o.id);
     const km = LH.fromShopKm(o.lat, o.lng);
     const rk = p ? LH.distKm(p, o) : 0;
     const rider = p ? `🛵 ${p.mine ? 'Your location' : 'Rider'} updated ${ago(p.lts)} · ${rk.toFixed(1)} km from the customer · about ${LH.etaMin(rk)} min`
-      : s === 'out' ? 'No rider location shared yet. Tap Share location on the rider\'s phone.' : s === 'completed' ? 'Delivered.' : s === 'rejected' ? 'Rejected.' : 'The rider\'s location appears once the order is out for delivery.';
+      : s === 'out' ? 'No rider location shared yet. Tap Share location on the rider\'s phone.' : s === 'completed' ? `Delivered${m.how === 'otp' ? ' (code verified).' : m.how === 'manual' ? ' (closed manually).' : '.'}` : s === 'rejected' ? 'Rejected.' : 'The rider\'s location appears once the order is out for delivery.';
     const pay = o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : 'Cash on delivery';
     const acts = actionsFor(o, s).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('');
     return `<div class="dv-head"><h3>${esc(o.id)} · ${esc(o.n)}</h3><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span></div>
@@ -568,7 +646,7 @@
   function actionsFor(o, s) {
     if (o.svc === 'deliver') {
       if (s === 'ready') return [['out', 'Out for delivery', '']];
-      if (s === 'out') return [['completed', 'Delivered', ''], ['ride', ride.ids.has(o.id) ? '⏹ Stop sharing' : '📡 Share location', 'sec']];
+      if (s === 'out') return [['completed', '🔐 Enter code', ''], ['manual', 'Close manually', 'sec'], ['ride', ride.ids.has(o.id) ? '⏹ Stop sharing' : '📡 Share location', 'sec']];
     }
     return ACTION[s] || [];
   }
@@ -584,7 +662,7 @@
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
       <div class="oc-cust"><b>${esc(o.n)}</b><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>
       <div class="chips"><span class="chip ${del ? 'del' : ''}">${svcChip}</span>
-        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : del ? 'Cash on delivery' : 'Pay at counter'}</span>${o.em ? '<span class="chip ok" title="Customer gets email updates">✉ Email</span>' : ''}</div>
+        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : del ? 'Cash on delivery' : 'Pay at counter'}</span>${o.em ? '<span class="chip ok" title="Customer gets email updates">✉ Email</span>' : ''}${codeChip(o, s)}${closedChip(o, s)}</div>
       ${where}
       <ul class="oc-items">${o.it.map(([id, q]) => `<li><b>${q}×</b>${esc(ITEMS.get(id).name)}</li>`).join('')}</ul>
       ${o.nt ? `<div class="note">📝 ${esc(o.nt)}</div>` : ''}
@@ -614,6 +692,7 @@
     else if (act === 'print') printTicket(orders.get(id));
     else if (act === 'pay') togglePay(id);
     else if (act === 'map') { dv.id = id; dv.moved = false; showTab('deliveries'); }
+    else if (act === 'manual') askDeliveryClose(id, true);
     else if (act === 'ride') { if (ride.ids.has(id)) stopRide(id); else startRide(id); }
     else setStatus(id, act);
   }
@@ -740,14 +819,14 @@
         <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span>${o.svc === 'deliver' ? `<br><span class="muted">🛵 ${esc(o.addr)}</span>` : ''}</td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
         <td><b>${fmt(o.total)}</b>${o.svc === 'deliver' ? `<br><span class="muted">incl. ${o.fee ? fmt(o.fee) : 'free'} delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km</span>` : ''}</td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
-        <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span>${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
+        <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span>${closedChip(o, s)}${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
     }).join('') : '<tr><td colspan="7" class="muted" style="padding:30px;text-align:center">No orders found.</td></tr>';
   }
 
   const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
   function exportCsv() {
-    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note', 'Address', 'Latitude', 'Longitude', 'Delivery fee'];
-    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt, o.addr || '', o.lat ?? '', o.lng ?? '', o.fee ?? '']);
+    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note', 'Address', 'Latitude', 'Longitude', 'Delivery fee', 'Delivery closed by'];
+    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt, o.addr || '', o.lat ?? '', o.lng ?? '', o.fee ?? '', o.svc === 'deliver' && statusOf(o.id) === 'completed' ? ((meta[o.id] || {}).how === 'otp' ? 'code' : (meta[o.id] || {}).how === 'manual' ? 'manual' : 'unknown') : '']);
     const blob = new Blob([[head, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `lauralshaven-orders-${new Date().toISOString().slice(0, 10)}.csv`;

@@ -300,6 +300,8 @@ async function until(fn, ms = 8000, step = 60) {
     await act(A, o.id, 'cooking');
     let t = await act(A, o.id, 'ready');
     check('delivery has no early "Complete" action', (await card(A, o.id).locator('[data-act="completed"]').count()) === 0);
+    const code = db.docs.get(`orders/${o.id}`).otp;
+    check('delivery order carries a 4-digit code', /^[0-9]{4}$/.test(code), String(code));
     t = await act(A, o.id, 'out');
     const lo = await nextEmail(em, /on the way/, t);
     check('"on the way" email within a few seconds', lo > 0 && lo < 4500, `${lo} ms`);
@@ -315,10 +317,115 @@ async function until(fn, ms = 8000, step = 60) {
     check('track view shows distance from the rider', !!(await until(async () => /km from you/.test(await s.page.textContent('#tvInfo')), 6000)));
     check('track map initialises', !!(await until(() => s.page.locator('#tvMap .leaflet-container, #tvMap.leaflet-container').count(), 6000)));
     t = await act(A, o.id, 'completed');
+    await A.page.waitForSelector('#otpIn');
+    await A.page.fill('#otpIn', code);
+    await A.page.click('#otpGo');
     const ld = await nextEmail(em, /delivered/, t);
     check('"delivered" email within a few seconds', ld > 0 && ld < 4500, `${ld} ms`);
+    check('delivery closed by the code', (db.docs.get(`status/${o.id}`) || {}).how === 'otp');
     check('track view reflects delivery', !!(await until(async () => /delivered/i.test(await s.page.textContent('#tvSub')), 5000)));
     await s.page.click('#tvClose');
+  });
+
+  /* ---------------- Delivery code (OTP) and manual close ---------------- */
+  const toOut = async (o) => { for (const to of ['accepted', 'cooking', 'ready', 'out']) await act(A, o.id, to); };
+  const dStatus = (id) => db.docs.get(`status/${id}`) || {};
+  const otpMsg = async () => (await A.page.textContent('#otpMsg')).trim();
+  const tryCode = async (code) => { await A.page.fill('#otpIn', code); await A.page.click('#otpGo'); };
+
+  await scenario('delivery code: shown, emailed, wrong codes, lockout, manual close', async () => {
+    const em = 'otp1@example.com';
+    const s = await newShop({ geo: geoAt(2) });
+    const o = await place(s, { items: [5], svc: 'deliver', pay: 'counter', em });
+    const code = db.docs.get(`orders/${o.id}`).otp;
+    check('code is 4 digits and stored on the order', /^[0-9]{4}$/.test(code), String(code));
+    check('code is not on the public status doc', !JSON.stringify(dStatus(o.id)).includes('otp'));
+    check('success screen shows the code', (await s.page.textContent('#modalCard .otp-box')).includes(code));
+    const m1 = await until(() => has(em, /received/), 8000);
+    check('"received" email contains the code', !!m1 && m1.text.includes(code) && m1.html.includes(code));
+    await closeModal(s);
+    await s.page.click('#ordersBtn');
+    check('My orders shows the code', (await s.page.textContent('#ordersBody')).includes(code));
+    await s.page.evaluate(() => document.querySelector('[data-track]').click());
+    await s.page.waitForSelector('#trackView:not([hidden])');
+    check('track view shows the code', (await s.page.textContent('#tvInfo')).includes(code));
+    await s.page.click('#tvClose');
+    await card(A, o.id).waitFor();
+    check('admin card flags that a code exists', /Code/.test(await card(A, o.id).textContent()));
+    await act(A, o.id, 'accepted');
+    check('"confirmed" email contains the code', !!(await until(() => { const e = has(em, /confirmed|accepted/i); return e && e.text.includes(code); }, 8000)));
+    await act(A, o.id, 'cooking'); await act(A, o.id, 'ready');
+    check('ready to completed is blocked for delivery', (await card(A, o.id).locator('[data-act="completed"]').count()) === 0);
+    await act(A, o.id, 'out');
+    check('"on the way" email contains the code', !!(await until(() => { const e = has(em, /on the way/); return e && e.text.includes(code); }, 8000)));
+    check('out card offers code entry and manual close', (await card(A, o.id).locator('[data-act="completed"]').count()) === 1 && (await card(A, o.id).locator('[data-act="manual"]').count()) === 1);
+    const wrong = code === '0000' ? '1111' : '0000';
+    await act(A, o.id, 'completed');
+    await A.page.waitForSelector('#otpIn');
+    await tryCode('12');
+    check('short code is rejected', /4-digit/.test(await otpMsg()));
+    await tryCode(wrong);
+    check('wrong code refused with attempts left', /4 attempts left/.test(await otpMsg()), await otpMsg());
+    check('order stays out for delivery after a wrong code', (await shopStatus(s, o.id)) === 'out' && dStatus(o.id).s === 'out');
+    for (let i = 0; i < 4; i++) await tryCode(wrong);
+    check('5 wrong codes lock the entry', (await A.page.locator('#otpIn').isDisabled()) && /Too many/.test(await otpMsg()), await otpMsg());
+    check('still not delivered while locked', dStatus(o.id).s === 'out');
+    await A.page.click('#manualOpen');
+    await A.page.click('#manualBack');
+    check('lock persists when reopening the code view', await A.page.locator('#otpIn').isDisabled());
+    await A.page.click('#manualOpen');
+    await A.page.click('#manualYes');
+    check('manual close completes the order', !!(await until(async () => (await shopStatus(s, o.id)) === 'completed', 5000)) && dStatus(o.id).how === 'manual');
+    check('card shows closed manually', !!(await until(async () => /Closed manually/.test(await card(A, o.id).textContent()), 4000)));
+    check('delivered email sent', !!(await until(() => has(em, /delivered/), 8000)));
+    check('customer no longer sees the code', !(await s.page.evaluate(() => JSON.stringify(window.__lh.orders)).then((j) => j.includes(`"otp":"${code}"`))));
+    check('delivered email does not repeat the code', !(has(em, /delivered/).text || '').includes(code));
+  });
+
+  await scenario('delivery code: correct code closes the order', async () => {
+    const em = 'otp2@example.com';
+    const s = await newShop({ geo: geoAt(2) });
+    const o = await place(s, { items: [5], svc: 'deliver', pay: 'counter', em });
+    const code = db.docs.get(`orders/${o.id}`).otp;
+    await closeModal(s);
+    await card(A, o.id).waitFor();
+    await toOut(o);
+    const t = await act(A, o.id, 'completed');
+    await A.page.waitForSelector('#otpIn');
+    await tryCode(code);
+    check('customer sees delivered', !!(await until(async () => (await shopStatus(s, o.id)) === 'completed', 5000)));
+    check('closed by code, recorded as such', dStatus(o.id).how === 'otp');
+    check('card shows code verified', !!(await until(async () => /Code verified/.test(await card(A, o.id).textContent()), 4000)));
+    check('delivered email arrives', (await nextEmail(em, /delivered/, t)) > 0);
+    await s.page.click('#ordersBtn');
+    check('code hidden after delivery', !(await s.page.locator('#ordersBody .otp-box').count()));
+  });
+
+  await scenario('delivery code: order without a code (old rules) closes manually only', async () => {
+    const em = 'otp3@example.com';
+    db.noOtpRules = true;
+    const s = await newShop({ geo: geoAt(2) });
+    let o;
+    try { o = await place(s, { items: [5], svc: 'deliver', pay: 'counter', em }); } finally { db.noOtpRules = false; }
+    check('order is still placed when rules reject the code', !!o && !!db.docs.get(`orders/${o.id}`));
+    check('order has no code', db.docs.get(`orders/${o.id}`).otp === undefined);
+    check('customer sees no code', !(await s.page.locator('#modalCard .otp-box').count()));
+    await closeModal(s);
+    await card(A, o.id).waitFor();
+    check('admin card says no code', /No code/.test(await card(A, o.id).textContent()));
+    await toOut(o);
+    await act(A, o.id, 'completed');
+    await A.page.waitForSelector('#manualYes');
+    check('only manual close is offered', (await A.page.locator('#otpIn').count()) === 0 && /no delivery code/i.test(await A.page.textContent('#modalCard')));
+    await A.page.click('#manualYes');
+    check('closed manually', !!(await until(async () => (await shopStatus(s, o.id)) === 'completed', 5000)) && dStatus(o.id).how === 'manual');
+  });
+
+  await scenario('delivery code: not used for dine-in or takeaway', async () => {
+    check('dine-in order has no code', db.docs.get(`orders/${placed.dine}`).otp === undefined);
+    check('takeaway order has no code', db.docs.get(`orders/${placed.upi}`).otp === undefined);
+    const dineMails = world.emails.filter((x) => x.subject.includes(placed.dine) || x.subject.includes(placed.upi));
+    check('no delivery code in dine-in or takeaway emails', dineMails.length > 0 && !dineMails.some((x) => /delivery code/i.test(`${x.text} ${x.html}`)));
   });
 
   /* ---------------- Closed store ---------------- */

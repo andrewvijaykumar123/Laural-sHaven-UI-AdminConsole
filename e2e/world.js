@@ -26,8 +26,10 @@ class Db {
 
   validOrder(d, id, uid) {
     const it = (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; });
-    const o = this.LH.validateOrder({ id: d.id, ts: Date.now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, it });
+    const o = this.LH.validateOrder({ id: d.id, ts: Date.now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, otp: d.otp, it });
     if (!o || d.id !== id || d.uid !== uid || !d.at || !d.at.__serverTs || o.total !== d.total) return false;
+    // The delivery code is optional, 4 digits, delivery orders only; noOtpRules simulates rules published before the feature existed.
+    if ('otp' in d && (this.noOtpRules || d.svc !== 'deliver' || !/^[0-9]{4}$/.test(String(d.otp)))) return false;
     if (d.svc === 'deliver' && (!this.cfg().del || o.fee !== d.fee)) return false;
     return true;
   }

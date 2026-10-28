@@ -36,10 +36,16 @@ service cloud.firestore {
       return km > 10 ? 75 + 20 * (km - 10) - 2 : (km > 5 ? 15 * (km - 5) - 2 : 0);
     }
 
+    // Optional 4-digit delivery code (orders placed before the feature, or by a cached page, have none and are closed manually).
+    function validOtp(d) {
+      return !('otp' in d) || (d.otp is string && d.otp.matches('^[0-9]{4}$'));
+    }
+
     // Farthest delivery is 15 km (15.1 allows for the flat-earth approximation).
     function validDelivery(d) {
       return deliveryOn()
         && d.keys().hasAll(['addr', 'lat', 'lng', 'fee'])
+        && validOtp(d)
         && d.addr is string && d.addr.size() >= 8 && d.addr.size() <= 200 && !d.addr.matches('.*[<>].*')
         && (d.lat is float || d.lat is int) && (d.lng is float || d.lng is int)
         && d.lat >= -90 && d.lat <= 90 && d.lng >= -180 && d.lng <= 180
@@ -49,7 +55,7 @@ service cloud.firestore {
     }
 
     function validOrder(d, id) {
-      return d.keys().hasOnly(['id', 'n', 'p', 'em', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at', 'addr', 'lat', 'lng', 'fee'])
+      return d.keys().hasOnly(['id', 'n', 'p', 'em', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at', 'addr', 'lat', 'lng', 'fee', 'otp'])
         && d.keys().hasAll(['id', 'n', 'p', 'it', 'total', 'pay', 'svc', 'uid', 'at'])
         && d.id == id
         && d.uid == request.auth.uid
@@ -63,7 +69,7 @@ service cloud.firestore {
         && d.total is int && d.total > 0 && d.total <= 100000
         && d.pay in ['upi', 'counter']
         && d.svc in ['dine', 'take', 'deliver']
-        && (d.svc == 'deliver' ? validDelivery(d) : !(('addr' in d) || ('lat' in d) || ('lng' in d) || ('fee' in d)));
+        && (d.svc == 'deliver' ? validDelivery(d) : !(('addr' in d) || ('lat' in d) || ('lng' in d) || ('fee' in d) || ('otp' in d)));
     }
 
     // Private: only the admin can read orders. Customers can only create them, and only while the store is open.

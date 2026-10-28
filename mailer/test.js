@@ -159,6 +159,33 @@ const send = async (m) => { outbox.push(m); };
   assert.match(dm.html, /Home delivery/); assert.match(dm.text, /Home delivery 2 orders/);
   assert.match(lib.reportEmail(LH, day, [], null).html, /No home deliveries/);
 
+  // delivery code: generated as 4 digits, kept only on delivery orders, shown in the received, confirmed and on-the-way emails, never after delivery
+  for (let i = 0; i < 200; i++) assert.match(LH.newOtp(), /^\d{4}$/);
+  assert.ok(LH.validOtp('0042') && !LH.validOtp('42') && !LH.validOtp('12345') && !LH.validOtp('12a4') && !LH.validOtp(1234) && !LH.validOtp(undefined));
+  const withCode = lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1', { otp: '4827' }), T0);
+  assert.strictEqual(withCode.otp, '4827', 'code is carried from the stored order');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1', { otp: '48x7' }), T0).otp, undefined, 'malformed code is dropped');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1'), T0).otp, undefined, 'older orders have no code');
+  assert.strictEqual(lib.toOrder(LH, 'LH-TAKE01', doc('LH-TAKE01', { otp: '4827' }), T0).otp, undefined, 'non-delivery orders never carry a code');
+  for (const [name, fn] of [['received', lib.receivedEmail], ['confirmed', lib.confirmEmail], ['on the way', lib.outEmail]]) {
+    const m = fn(LH, withCode, {});
+    assert.ok(m.html.includes('4827') && m.text.includes('Your delivery code: 4827'), `${name} email shows the code`);
+  }
+  for (const [name, fn] of [['ready', lib.readyEmail], ['delivered', lib.doneEmail]]) assert.ok(!fn(LH, withCode, {}).html.includes('4827') && !fn(LH, withCode, {}).text.includes('4827'), `${name} email does not repeat the code`);
+  assert.ok(!lib.confirmEmail(LH, lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1'), T0), {}).html.includes('delivery code'), 'no code block without a code');
+  assert.ok(!lib.confirmEmail(LH, lib.toOrder(LH, 'LH-TAKE01', doc('LH-TAKE01'), T0), {}).html.includes('delivery code'), 'no code block for takeaway');
+  // the scheduled mailer includes the code too
+  outbox.length = 0;
+  await lib.sweep({ store: fake([{ id: 'LH-DELIV1', data: dd('LH-DELIV1', { otp: '4827' }), ts: T0 }], { 'LH-DELIV1': { s: 'pending' } }, {}), send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /received/); assert.ok(outbox[0].text.includes('4827'), 'fallback mailer sends the code with the first email');
+  // the daily report CSV never contains the code
+  const csvMail = lib.reportEmail(LH, day, [{ o: withCode, s: 'completed', v: false, r: '' }], null);
+  assert.ok(!csvMail.attachments[0].content.includes('4827') && !csvMail.html.includes('4827'), 'report has no code');
+  // a delivery can only be closed from "out"; other services are unchanged
+  assert.deepStrictEqual([...LH.nextFor({ svc: 'deliver' }, 'ready')], ['out']);
+  assert.deepStrictEqual([...LH.nextFor({ svc: 'deliver' }, 'out')], ['completed']);
+  assert.deepStrictEqual([...LH.nextFor({ svc: 'take' }, 'ready')], ['completed']);
+
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);

@@ -284,3 +284,9 @@ select{height:2.875rem}
 @media print{body>*:not(#printArea){display:none!important}#printArea{display:block!important;color:#000;font-family:monospace;width:17.5rem}}
 #printArea{display:none}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* Delivery code entry */
+.otp-in{display:block;width:100%;margin:0 0 0.5rem;padding:0.75rem;border-radius:0.75rem;border:1px solid var(--line);background:var(--card);color:var(--text);font:800 2rem ui-monospace,Consolas,monospace;letter-spacing:.5em;padding-left:.5em;text-align:center}
+.otp-in:focus{border-color:var(--accent);box-shadow:0 0 0 0.25rem rgba(124,156,255,.2);outline:none}
+.otp-msg{min-height:1.25rem;margin:0 0 0.5rem;color:var(--red);font-size:.86rem;text-align:center}
+.modal-card.shake{animation:shake .45s}

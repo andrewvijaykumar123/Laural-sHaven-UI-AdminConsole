@@ -88,8 +88,11 @@
     rejected: { label: 'Rejected', short: 'Rejected', color: '#ef4444', step: -1 }
   };
   const NEXT = { pending: ['accepted', 'rejected'], accepted: ['cooking', 'rejected'], cooking: ['ready'], ready: ['completed', 'out'], out: ['completed'], completed: [], rejected: [] };
-  // 'Out for delivery' only exists for delivery orders.
-  const nextFor = (o, s) => (NEXT[s] || []).filter((x) => x !== 'out' || (o && o.svc === 'deliver'));
+  // 'Out for delivery' only exists for delivery orders, and a delivery can only be closed from 'out' (with the customer's code, or manually).
+  const nextFor = (o, s) => {
+    const del = !!(o && o.svc === 'deliver');
+    return (NEXT[s] || []).filter((x) => (x === 'out' ? del : !(del && s === 'ready' && x === 'completed')));
+  };
   const statusLabel = (o, s) => (o && o.svc === 'deliver' && s === 'completed' ? 'Delivered' : (STATUS[s] || STATUS.pending).label);
 
   /* ---------- Delivery area: straight-line distance from the cafe ---------- */
@@ -139,6 +142,9 @@
   const randomString = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => ALPHABET[x % ALPHABET.length]).join('');
   const newOrderId = () => `LH-${randomString(6)}`;
   const validId = (id) => typeof id === 'string' && /^LH-[A-Z0-9]{6,10}$/.test(id);
+  // Delivery code: 4 digits the customer hands to the delivery partner, who types it into the admin console to close the order.
+  const validOtp = (s) => typeof s === 'string' && /^\d{4}$/.test(s);
+  const newOtp = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
   /* ---------- App-scoped storage and clock ---------- */
   let prefix = 'lh.';
   const store = {
@@ -196,6 +202,7 @@
       Object.assign(out, { addr, lat: r5(o.lat), lng: r5(o.lng) });
       out.fee = deliveryFee(fromShopKm(out.lat, out.lng));
       out.total += out.fee;
+      if (validOtp(o.otp)) out.otp = o.otp;
     }
     return out;
   }
@@ -262,19 +269,25 @@
     return Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
 
-  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl, ...(o.svc === 'deliver' ? { addr: o.addr, lat: o.lat, lng: o.lng, fee: o.fee } : {}) });
+  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl, ...(o.svc === 'deliver' ? { addr: o.addr, lat: o.lat, lng: o.lng, fee: o.fee, ...(o.otp ? { otp: o.otp } : {}) } : {}) });
   const fromDoc = (d) => validateOrder({
     id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
-    addr: d.addr, lat: d.lat, lng: d.lng,
+    addr: d.addr, lat: d.lat, lng: d.lng, otp: d.otp,
     it: (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
   });
 
   async function publishOrder(draft) {
-    const order = validateOrder({ ...draft, id: draft.id || newOrderId(), ts: now() });
+    const order = validateOrder({ ...draft, id: draft.id || newOrderId(), ts: now(), otp: draft.svc === 'deliver' ? (validOtp(draft.otp) ? draft.otp : newOtp()) : undefined });
     if (!order) throw new Error('Invalid order');
     const user = await ensureUser();
     const { db } = firebase();
-    await write(window.LH_FB.setDoc(window.LH_FB.doc(db, 'orders', order.id), { ...toDoc(order), uid: user.uid, at: window.LH_FB.serverTimestamp() }));
+    const send = () => write(window.LH_FB.setDoc(window.LH_FB.doc(db, 'orders', order.id), { ...toDoc(order), uid: user.uid, at: window.LH_FB.serverTimestamp() }));
+    try { await send(); } catch (e) {
+      if (!(order.otp && e && e.code === 'permission-denied')) throw e;
+      // Rules published before delivery codes existed refuse the extra field: place the order without a code (closed manually) rather than lose it.
+      delete order.otp;
+      await send();
+    }
     return order;
   }
 
@@ -306,7 +319,8 @@
       if (!validId(f.id) || !STATUS[f.s]) throw new Error('Invalid status');
       // A finished order stops exposing the rider's position.
       const wipe = f.s === 'completed' || f.s === 'rejected' ? { lat: null, lng: null, acc: null, lts: null } : {};
-      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...wipe }, { merge: true }));
+      const how = f.s === 'completed' && (f.how === 'otp' || f.how === 'manual') ? { how: f.how } : {};
+      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...how, ...wipe }, { merge: true }));
     }
     if (f.k === 'loc') {
       const ids = (Array.isArray(f.ids) ? f.ids : [f.id]).filter(validId).slice(0, 10);
@@ -368,7 +382,7 @@
       const key = `${d.s}|${Number(d.ts) || 0}|${d.r || ''}`;
       if (lastStatus.get(id) !== key) {
         lastStatus.set(id, key);
-        emit('status', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
+        emit('status', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0, how: d.s === 'completed' && (d.how === 'otp' || d.how === 'manual') ? d.how : '' });
       }
     }
     if (typeof d.v === 'boolean') emit('pay', { id, v: d.v, ts: Number(d.pts) || 0 });
@@ -463,7 +477,7 @@
   window.LH = {
     UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
-    fmt, esc, clean, slug, randomString, newOrderId, validId, priceLines, validateOrder,
+    fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder,
     store, now, on, emit, init, connect, watch, flush,
     publishOrder, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,

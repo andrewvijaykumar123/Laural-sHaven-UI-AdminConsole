@@ -31,6 +31,13 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
 <tr><td style="padding-top:10px;font-weight:700">Total</td><td align="right" style="padding-top:10px;font-weight:700">${LH.esc(LH.fmt(o.total))}</td></tr></table>`;
   }
 
+  /* The 4-digit code a delivery customer gives the delivery partner; the admin console closes the order when it matches. */
+  function otpHtml(LH, o) {
+    if (o.svc !== 'deliver' || !LH.validOtp(o.otp)) return '';
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 0"><tr><td align="center" style="background:#fff7ed;border:1px dashed ${BRAND};border-radius:10px;padding:14px"><div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em">Your delivery code</div><div style="font-size:34px;font-weight:800;letter-spacing:.3em;color:${BRAND};padding-left:.3em">${LH.esc(o.otp)}</div><div style="font-size:12px;color:#4b5563">Give this code to the delivery partner only when you receive your order. It is also shown in your order on our website.</div></td></tr></table>`;
+  }
+  const otpText = (LH, o) => (o.svc === 'deliver' && LH.validOtp(o.otp) ? `Your delivery code: ${o.otp}\nGive it to the delivery partner only when you receive your order.\n\n` : '');
+
   const where = (o) => (o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? `Delivery to ${o.addr}` : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
   const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
   const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
@@ -41,11 +48,11 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
     const subject = `We received your order ${o.id} - ${SHOP}`;
     const next = o.pay === 'upi' ? 'Please complete the UPI payment if you have not already; we confirm it before the order is served.' : 'We will confirm it in a moment.';
     const html = shell(LH, 'Order received', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, thank you! We have received your order <b>${LH.esc(o.id)}</b>.</p>
-${itemsTable(LH, o)}
+${itemsTable(LH, o)}${otpHtml(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, false))}<br>Placed ${LH.esc(placedAt(o))} IST</p>
 ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(next)} You can follow its progress on our website, on the device you ordered from.</p>`, `We received your order ${o.id}.`);
-    const text = `Hi ${o.n}, thank you! We have received your order ${o.id}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, false)}\n\n${next}\n- ${SHOP}`;
+    const text = `Hi ${o.n}, thank you! We have received your order ${o.id}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, false)}\n\n${next}\n\n${otpText(LH, o)}- ${SHOP}`;
     return { subject, html, text };
   }
 
@@ -53,20 +60,20 @@ ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${L
     const prep = Number(ctx.prep) > 0 ? ` It should be ready in about ${Number(ctx.prep)} minutes.` : '';
     const subject = `Order ${o.id} confirmed - ${SHOP}`;
     const html = shell(LH, 'Order confirmed and bill', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is confirmed.${LH.esc(prep)}</p>
-${itemsTable(LH, o)}
+${itemsTable(LH, o)}${otpHtml(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, ctx.paid))}<br>Placed ${LH.esc(placedAt(o))} IST</p>
 ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${o.svc === 'deliver' ? 'We will email you when it is on the way. You can also follow the rider live on our website.' : 'We will email you again when it is ready.'}</p>`, `Order ${o.id} is confirmed.`);
-    const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\n${o.svc === 'deliver' ? 'We will email you when it is on the way.' : 'We will email you again when it is ready.'}\n- ${SHOP}`;
+    const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\n${o.svc === 'deliver' ? 'We will email you when it is on the way.' : 'We will email you again when it is ready.'}\n\n${otpText(LH, o)}- ${SHOP}`;
     return { subject, html, text };
   }
 
   function outEmail(LH, o) {
     const subject = `Order ${o.id} is on the way - ${SHOP}`;
     const html = shell(LH, 'Out for delivery', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is out for delivery to ${LH.esc(o.addr)}.</p>
-${itemsTable(LH, o)}
+${itemsTable(LH, o)}${otpHtml(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(payLine(o, false))}. Open our website on the device you ordered from to follow the rider live on the map.</p>`, `Order ${o.id} is on the way.`);
-    const text = `Hi ${o.n}, your order ${o.id} is out for delivery to ${o.addr}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n${payLine(o, false)}\n\nOpen our website on the device you ordered from to follow the rider live.\n- ${SHOP}`;
+    const text = `Hi ${o.n}, your order ${o.id} is out for delivery to ${o.addr}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n${payLine(o, false)}\n\nOpen our website on the device you ordered from to follow the rider live.\n\n${otpText(LH, o)}- ${SHOP}`;
     return { subject, html, text };
   }
 

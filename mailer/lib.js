@@ -22,7 +22,7 @@ function loadCore() {
 /* ---------- Orders ---------- */
 function toOrder(LH, id, d, tsMs) {
   const it = (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; });
-  const o = LH.validateOrder({ id, ts: tsMs, n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, it });
+  const o = LH.validateOrder({ id, ts: tsMs, n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, otp: d.otp, it });
   return o;
 }
 
