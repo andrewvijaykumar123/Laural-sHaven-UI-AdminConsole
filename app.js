@@ -188,15 +188,18 @@
   const MAIL_RELAY = 'https://laurals-haven-relay.andrewvijaykumar123.workers.dev';
   const GH_REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
   let kickTimer = null;
+  let mailErr = '';
   async function dispatchWorkflow(file, inputs) {
+    mailErr = '';
     if (MAIL_RELAY) {
       const u = await LH.admin.current();
-      if (!u) return false;
+      if (!u) { mailErr = 'not signed in'; return false; }
       const r = await fetch(MAIL_RELAY, {
         method: 'POST',
         headers: { Authorization: `Bearer ${await u.getIdToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflow: file, ...(inputs || {}) })
       });
+      if (!r.ok) mailErr = `${r.status} ${(await r.text()).slice(0, 160)}`;
       return r.ok;
     }
     const tok = store.get('ghToken', '');
@@ -213,8 +216,8 @@
     clearTimeout(kickTimer);
     kickTimer = setTimeout(async () => {
       let ok = false;
-      try { ok = await dispatchWorkflow('mailer.yml'); } catch (e) { /* offline */ }
-      if (!ok) toast('Could not start the email service now. Emails will go out within 15 minutes.', 'bad');
+      try { ok = await dispatchWorkflow('mailer.yml'); } catch (e) { mailErr = 'network or CORS error'; }
+      if (!ok) toast(`Could not start the email service now${mailErr ? ` (${mailErr})` : ''}. Emails will go out within 15 minutes.`, 'bad');
     }, 2500);
   }
   function renderMail() {
@@ -225,8 +228,8 @@
   }
   async function runNow(btn, file, inputs, okMsg) {
     btn.disabled = true;
-    try { toast((await dispatchWorkflow(file, inputs)) ? okMsg : 'GitHub refused the request. Check the token.', 'ok'); }
-    catch (e) { toast('Could not reach GitHub.', 'bad'); }
+    try { const ok = await dispatchWorkflow(file, inputs); toast(ok ? okMsg : (MAIL_RELAY ? `Could not start it (${mailErr}).` : 'GitHub refused the request. Check the token.'), ok ? 'ok' : 'bad'); }
+    catch (e) { toast(MAIL_RELAY ? 'Could not reach the email relay.' : 'Could not reach GitHub.', 'bad'); }
     btn.disabled = false;
   }
   async function togglePay(id) {

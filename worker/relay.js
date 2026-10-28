@@ -62,6 +62,8 @@ export default {
       },
       body: JSON.stringify({ ref: 'main', ...(inputs ? { inputs } : {}) })
     });
-    return reply(r.status === 204 ? 204 : 502, r.status === 204 ? null : 'GitHub refused');
+    let detail = '';
+    if (r.status !== 204) { try { detail = String((await r.json()).message || '').slice(0, 120); } catch (e) { /* no body */ } }
+    return reply(r.status === 204 ? 204 : 502, r.status === 204 ? null : `GitHub ${r.status}: ${detail}`);
   }
 };
