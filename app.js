@@ -74,6 +74,7 @@
       if (user && exp > Date.now()) { start(exp); return; }
       if (user) await LH.admin.signOut();
     } catch (e) { /* not signed in */ }
+    $('#lock').hidden = false;
     $('#email').focus();
   })();
   /* ---------- Data ---------- */
