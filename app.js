@@ -185,7 +185,7 @@
   }
 
   /* Emails are sent by GitHub Actions. The relay (worker/relay.js) starts a run for any signed-in admin device; without it a per-device GitHub token is used, else a 15-minute schedule picks changes up. */
-  const MAIL_RELAY = 'https://laurals-haven-relay.andrewvijaykumar123.workers.dev';
+  const MAIL_RELAY = 'https://lauralshaven.andrewvijaykumar123.workers.dev';
   const GH_REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
   let kickTimer = null;
   let mailErr = '';
