@@ -180,7 +180,7 @@
   /* ---------- Actions ---------- */
   async function setStatus(id, s, reason = '') {
     if (!NEXT[statusOf(id)].includes(s)) return;
-    try { await LH.publishAdmin({ k: 'st', id, s, r: reason }); fresh.delete(id); if (['accepted', 'rejected', 'ready'].includes(s)) kickMailer(); }
+    try { await LH.publishAdmin({ k: 'st', id, s, r: reason }); fresh.delete(id); if (['accepted', 'rejected', 'ready', 'completed'].includes(s)) kickMailer(); }
     catch (e) { toast('Could not update the order.', 'bad'); }
   }
 

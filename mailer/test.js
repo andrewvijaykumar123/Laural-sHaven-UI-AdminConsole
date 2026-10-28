@@ -49,11 +49,20 @@ const send = async (m) => { outbox.push(m); };
   await lib.sweep({ store: fake(o2, { 'LH-BBBBBB': { s: 'ready' } }, {}), send, LH, now: T0, log: () => {} });
   assert.deepStrictEqual(outbox.map((m) => /ready/.test(m.subject)), [false, true]);
 
-  // completed without ever being ready: confirmation only, no ready mail
+  // completed without ever being seen as ready: confirmation plus a completion email, once
   outbox.length = 0;
   const m3 = {};
-  await lib.sweep({ store: fake([{ id: 'LH-CCCCCC', data: doc('LH-CCCCCC'), ts: T0 }], { 'LH-CCCCCC': { s: 'completed' } }, m3), send, LH, now: T0, log: () => {} });
-  assert.strictEqual(outbox.length, 1); assert.strictEqual(m3['LH-CCCCCC'].r, -1);
+  const s3 = fake([{ id: 'LH-CCCCCC', data: doc('LH-CCCCCC'), ts: T0 }], { 'LH-CCCCCC': { s: 'completed' } }, m3);
+  await lib.sweep({ store: s3, send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /complete/); assert.ok(m3['LH-CCCCCC'].r > 0);
+  await lib.sweep({ store: s3, send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 2, 'no repeat');
+
+  // earlier skip marker (r = -1) on a completed order is retried once
+  outbox.length = 0;
+  const m3b = { 'LH-EEEEEE': { c: T0, r: -1 } };
+  await lib.sweep({ store: fake([{ id: 'LH-EEEEEE', data: doc('LH-EEEEEE'), ts: T0 }], { 'LH-EEEEEE': { s: 'completed' } }, m3b), send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /complete/);
 
   // rejected: one apology, reason included, no confirmation
   outbox.length = 0;

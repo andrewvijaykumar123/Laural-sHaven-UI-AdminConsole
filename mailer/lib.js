@@ -74,6 +74,15 @@ ${itemsTable(LH, o)}
   return { subject, html, text };
 }
 
+function doneEmail(LH, o) {
+  const subject = `Order ${o.id} is complete - ${SHOP}`;
+  const html = shell(LH, 'Your order is complete', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is complete. We hope you enjoyed it.</p>
+${itemsTable(LH, o)}
+<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}. We look forward to seeing you again.</p>`);
+  const text = `Hi ${o.n}, your order ${o.id} is complete. We hope you enjoyed it.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
+  return { subject, html, text };
+}
+
 function rejectEmail(LH, o, reason) {
   const why = reason ? ` Reason: ${reason}.` : '';
   const subject = `Order ${o.id} could not be accepted - ${SHOP}`;
@@ -103,9 +112,10 @@ async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = c
     if (s === 'rejected') { if (!mail.x) jobs.push(['x', rejectEmail(LH, o, st.r)]); }
     else {
       if (!mail.c && s !== 'pending') jobs.push(['c', confirmEmail(LH, o, { prep: cfg.prep, paid: !!st.v })]);
-      if (!mail.r && s === 'ready') jobs.push(['r', readyEmail(LH, o)]);
+      const needR = !mail.r || mail.r === -1;
+      if (needR && s === 'ready') jobs.push(['r', readyEmail(LH, o)]);
+      if (needR && s === 'completed') jobs.push(['r', doneEmail(LH, o)]);
     }
-    if (s === 'completed' && !mail.r) { await store.setMail(o.id, { r: -1 }); stats.skipped++; }
 
     for (const [key, msg] of jobs) {
       if (stats.sent >= maxSends) return stats;
@@ -236,4 +246,4 @@ async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   return msg.stats;
 }
 
-module.exports = { loadCore, toOrder, confirmEmail, readyEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
+module.exports = { loadCore, toOrder, confirmEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
