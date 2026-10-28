@@ -131,6 +131,7 @@
     return { it, total };
   }
 
+  const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
   function validateOrder(o) {
     if (!o || !validId(o.id)) return null;
     const { it, total } = priceLines(o.it);
@@ -140,8 +141,9 @@
     if (!name || phone.replace(/\D/g, '').length < 7) return null;
     let ts = Number(o.ts);
     if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
+    const em = clean(o.em, 80).toLowerCase();
     return {
-      id: o.id, ts, n: name, p: phone, nt: clean(o.nt, 140), it, total,
+      id: o.id, ts, n: name, p: phone, em: EMAIL_RE.test(em) ? em : '', nt: clean(o.nt, 140), it, total,
       pay: o.pay === 'counter' ? 'counter' : 'upi', svc: o.svc === 'take' ? 'take' : 'dine', tbl: clean(o.tbl, 8)
     };
   }
@@ -208,9 +210,9 @@
     return Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
 
-  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl });
+  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl });
   const fromDoc = (d) => validateOrder({
-    id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
+    id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
     it: (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
   });
 

@@ -174,8 +174,42 @@
   /* ---------- Actions ---------- */
   async function setStatus(id, s, reason = '') {
     if (!NEXT[statusOf(id)].includes(s)) return;
-    try { await LH.publishAdmin({ k: 'st', id, s, r: reason }); fresh.delete(id); }
+    try { await LH.publishAdmin({ k: 'st', id, s, r: reason }); fresh.delete(id); if (['accepted', 'rejected', 'ready'].includes(s)) kickMailer(); }
     catch (e) { toast('Could not update the order.', 'bad'); }
+  }
+
+  /* Emails are sent by GitHub Actions. A saved token lets this console start the run at once; otherwise a 15-minute schedule picks changes up. */
+  const GH_REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
+  let kickTimer = null;
+  async function dispatchWorkflow(file, inputs) {
+    const tok = store.get('ghToken', '');
+    if (!tok) return null;
+    const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${file}/dispatches`, {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${tok}`, 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: 'main', ...(inputs ? { inputs } : {}) })
+    });
+    return r.status === 204;
+  }
+  function kickMailer() {
+    if (!store.get('ghToken', '')) return;
+    clearTimeout(kickTimer);
+    kickTimer = setTimeout(async () => {
+      let ok = false;
+      try { ok = await dispatchWorkflow('mailer.yml'); } catch (e) { /* offline */ }
+      if (!ok) toast('Could not start the email service now. Emails will go out within 15 minutes.', 'bad');
+    }, 2500);
+  }
+  function renderMail() {
+    const on = !!store.get('ghToken', '');
+    $('#mailState').textContent = on ? 'Instant emails are on for this device.' : 'Instant emails are off. Emails go out within about 15 minutes.';
+    $('#ghClear').hidden = !on; $('#mailNow').hidden = !on; $('#reportNow').hidden = !on;
+  }
+  async function runNow(btn, file, inputs, okMsg) {
+    btn.disabled = true;
+    try { toast((await dispatchWorkflow(file, inputs)) ? okMsg : 'GitHub refused the request. Check the token.', 'ok'); }
+    catch (e) { toast('Could not reach GitHub.', 'bad'); }
+    btn.disabled = false;
   }
   async function togglePay(id) {
     try { await LH.publishAdmin({ k: 'pv', id, v: !(meta[id] && meta[id].v) }); } catch (e) { toast('Could not update payment.', 'bad'); }
@@ -223,7 +257,7 @@
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
       <div class="oc-cust"><b>${esc(o.n)}</b><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>
       <div class="chips"><span class="chip">${o.svc === 'take' ? 'Takeaway' : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`}</span>
-        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : 'Pay at counter'}</span></div>
+        <span class="chip ${o.pay === 'upi' ? (m.v ? 'ok' : 'warn') : ''}">${o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : 'Pay at counter'}</span>${o.em ? '<span class="chip ok" title="Customer gets email updates">✉ Email</span>' : ''}</div>
       <ul class="oc-items">${o.it.map(([id, q]) => `<li><b>${q}×</b>${esc(ITEMS.get(id).name)}</li>`).join('')}</ul>
       ${o.nt ? `<div class="note">📝 ${esc(o.nt)}</div>` : ''}
       <div class="oc-foot"><strong>${fmt(o.total)}</strong><div class="acts">${(ACTION[s] || []).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('')}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div></div>
@@ -334,11 +368,11 @@
     const q = $('#histSearch').value.trim().toLowerCase();
     const st = $('#histStatus').value;
     const rows = [...orders.values()].sort((a, b) => b.ts - a.ts)
-      .filter((o) => (!st || statusOf(o.id) === st) && (!q || `${o.id} ${o.n} ${o.p}`.toLowerCase().includes(q))).slice(0, 300);
+      .filter((o) => (!st || statusOf(o.id) === st) && (!q || `${o.id} ${o.n} ${o.p} ${o.em}`.toLowerCase().includes(q))).slice(0, 300);
     $('#histBody').innerHTML = rows.length ? rows.map((o) => {
       const s = statusOf(o.id); const m = meta[o.id] || {};
       return `<tr><td class="oid">${esc(o.id)}</td><td>${new Date(o.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
-        <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}</span></td>
+        <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span></td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
         <td><b>${fmt(o.total)}</b></td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : 'Counter'}</td>
         <td><span class="badge" style="background:${STATUS[s].color}">${STATUS[s].label}</span>${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
@@ -347,8 +381,8 @@
 
   const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
   function exportCsv() {
-    const head = ['Order', 'Time', 'Name', 'Phone', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note'];
-    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt]);
+    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note'];
+    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt]);
     const blob = new Blob([[head, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `lauralshaven-orders-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -446,8 +480,17 @@
       toast(p === 'granted' ? 'Desktop notifications enabled' : 'Notifications blocked in the browser', p === 'granted' ? 'ok' : 'bad');
     });
     $('#retrySend').addEventListener('click', () => { LH.flush(); toast('Retrying...'); });
+    $('#ghSave').addEventListener('click', () => {
+      const v = $('#ghToken').value.trim();
+      if (!/^[A-Za-z0-9_]{20,255}$/.test(v)) { toast('That does not look like a GitHub token.', 'bad'); return; }
+      store.set('ghToken', v); $('#ghToken').value = ''; renderMail(); toast('Token saved on this device', 'ok');
+    });
+    $('#ghClear').addEventListener('click', () => { store.del('ghToken'); renderMail(); toast('Token removed', 'ok'); });
+    $('#mailNow').addEventListener('click', (e) => runNow(e.currentTarget, 'mailer.yml', null, 'Email service started'));
+    $('#reportNow').addEventListener('click', (e) => runNow(e.currentTarget, 'daily-report.yml', null, 'Report on its way'));
+    renderMail();
     $('#clearBoard').addEventListener('click', () => {
-      openModal('<h3>Clear the board?</h3><p class="muted" style="margin-bottom:16px">All current orders are removed from every admin device. Customers keep their own order history.</p><div class="reason-list"><button id="confirmClear" style="color:var(--red)">Yes, clear everything</button></div><button class="btn ghost" data-modal-close style="width:100%">Cancel</button>');
+      openModal('<h3>Clear the board?</h3><p class="muted" style="margin-bottom:16px">All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.</p><div class="reason-list"><button id="confirmClear" style="color:var(--red)">Yes, clear everything</button></div><button class="btn ghost" data-modal-close style="width:100%">Cancel</button>');
       $('#modalCard').onclick = async (e) => {
         if (!e.target.closest('#confirmClear')) return;
         closeModal();

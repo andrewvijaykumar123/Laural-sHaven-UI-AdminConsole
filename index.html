@@ -6,12 +6,12 @@
   <title>Laural's Haven | Admin Console</title>
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#0b1020">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.googleapis.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://api.github.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261027t">
+  <link rel="stylesheet" href="styles.css?v=20261028a">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -95,6 +95,12 @@
             <div class="cfg-row"><div><h4>Desktop notifications</h4><p>Pop-ups when the tab is in the background.</p></div><button class="btn ghost sm" id="notifyBtn">Enable</button></div>
             <button class="btn ghost sm" id="testSound">Play test chime</button></div>
           <div class="panel"><h3>Connection</h3><div id="connInfo"></div><button class="btn ghost sm" id="retrySend">Retry sending now</button></div>
+          <div class="panel"><h3>Email notifications</h3>
+            <p class="muted">Customers who enter an email get two messages: order confirmed (when you accept) and order ready. The owner report is emailed every night at 23:59 IST.</p>
+            <div id="mailState" class="muted" style="margin-top:8px"></div>
+            <input class="tok" id="ghToken" type="password" autocomplete="off" placeholder="GitHub token (optional, makes emails instant)">
+            <div class="stack"><button class="btn ghost sm" id="ghSave">Save token</button><button class="btn ghost sm" id="ghClear">Remove token</button>
+            <button class="btn ghost sm" id="mailNow">Send pending emails now</button><button class="btn ghost sm" id="reportNow">Email today's report now</button></div></div>
           <div class="panel"><h3>Data</h3><p class="muted">Orders sync live through Firebase and are also cached on this device.</p>
             <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
             <button class="btn danger sm" id="clearBoard">Clear board for everyone</button></div></div>
@@ -110,7 +116,7 @@
 
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
-  <script src="core.js?v=20261027t"></script>
-  <script src="app.js?v=20261027t"></script>
+  <script src="core.js?v=20261028a"></script>
+  <script src="app.js?v=20261028a"></script>
 </body>
 </html>

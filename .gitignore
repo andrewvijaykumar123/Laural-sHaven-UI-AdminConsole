@@ -1,2 +1,4 @@
 node_modules/
 tools/fb/fb.js
+mailer/out/
+firebase-debug.log

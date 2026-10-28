@@ -20,13 +20,14 @@ service cloud.firestore {
     }
 
     function validOrder(d, id) {
-      return d.keys().hasOnly(['id', 'n', 'p', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at'])
+      return d.keys().hasOnly(['id', 'n', 'p', 'em', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at'])
         && d.keys().hasAll(['id', 'n', 'p', 'it', 'total', 'pay', 'svc', 'uid', 'at'])
         && d.id == id
         && d.uid == request.auth.uid
         && d.at == request.time
         && d.n is string && d.n.size() > 0 && d.n.size() <= 40 && !d.n.matches('.*[<>].*')
         && d.p is string && d.p.matches('^[+0-9]{7,16}$')
+        && (!('em' in d) || (d.em is string && d.em.size() <= 80 && d.em.matches('^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$')))
         && (!('nt' in d) || (d.nt is string && d.nt.size() <= 140 && !d.nt.matches('.*[<>].*')))
         && (!('tbl' in d) || (d.tbl is string && d.tbl.size() <= 8 && !d.tbl.matches('.*[<>].*')))
         && d.it is list && d.it.size() >= 1 && d.it.size() <= 60

@@ -1,0 +1,44 @@
+name: Order emails
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+concurrency:
+  group: order-mailer
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      READY: ${{ secrets.GMAIL_APP_PASSWORD != '' && secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+    steps:
+      - name: Secrets not configured yet
+        if: env.READY != 'true'
+        run: echo "Add GMAIL_APP_PASSWORD and FIREBASE_SERVICE_ACCOUNT as repository secrets to enable emails."
+      - uses: actions/checkout@v4
+        if: env.READY == 'true'
+      - uses: actions/setup-node@v4
+        if: env.READY == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mailer/package-lock.json
+      - name: Install
+        if: env.READY == 'true'
+        working-directory: mailer
+        run: npm ci --omit=dev --no-audit --no-fund
+      - name: Send order emails
+        if: env.READY == 'true'
+        working-directory: mailer
+        run: node send.js
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_FROM: Havenlaurals06@gmail.com
