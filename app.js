@@ -445,7 +445,7 @@
     const m = meta[o.id] || {};
     const late = s === 'pending' && Date.now() - o.ts > 5 * 60000;
     const del = o.svc === 'deliver';
-    const svcChip = o.svc === 'take' ? 'Takeaway' : del ? `🛵 Delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km` : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`;
+    const svcChip = o.svc === 'take' ? 'Takeaway' : del ? `🛵 Delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km · ${o.fee ? `${fmt(o.fee)} fee` : 'free'}` : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`;
     const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">📡 Live map</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
     return `<article class="ocard ${fresh.has(o.id) ? 'fresh' : ''}" draggable="${LH.nextFor(o, s).length ? 'true' : 'false'}" data-id="${esc(o.id)}" style="--c:${STATUS[s].color}">
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
@@ -580,8 +580,8 @@
 
   const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
   function exportCsv() {
-    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note', 'Address', 'Latitude', 'Longitude'];
-    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt, o.addr || '', o.lat ?? '', o.lng ?? '']);
+    const head = ['Order', 'Time', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Note', 'Address', 'Latitude', 'Longitude', 'Delivery fee'];
+    const rows = [...orders.values()].sort((a, b) => a.ts - b.ts).map((o) => [o.id, new Date(o.ts).toISOString(), o.n, o.p, o.em, o.svc, o.tbl, o.it.map(([id, q]) => `${q}x ${ITEMS.get(id).name}`).join('; '), o.total, o.pay, (meta[o.id] || {}).v ? 'yes' : 'no', statusOf(o.id), o.nt, o.addr || '', o.lat ?? '', o.lng ?? '', o.fee ?? '']);
     const blob = new Blob([[head, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `lauralshaven-orders-${new Date().toISOString().slice(0, 10)}.csv`;

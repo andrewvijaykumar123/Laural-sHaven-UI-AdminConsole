@@ -115,6 +115,17 @@ const send = async (m) => { outbox.push(m); };
   await dRun(); assert.strictEqual(outbox.length, 3); assert.match(outbox[2].subject, /delivered/);
   await dRun(); assert.strictEqual(outbox.length, 3, 'delivered sent once');
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV2', dd('LH-DELIV2', { lat: 13.5, lng: 80.2 }), T0), null, 'out of range rejected');
+  // fee: free to 5 km, Rs 15/km to 10 km, Rs 20/km beyond; nothing past 15 km
+  assert.deepStrictEqual([0, 4.9, 5, 6, 7.5, 10, 12, 15].map(LH.deliveryFee), [0, 0, 0, 15, 38, 75, 115, 175]);
+  const at = (km) => dd('LH-DELIV6', { lat: 12.847503 + km / 110.57, lng: 80.196458 });
+  const o7 = lib.toOrder(LH, 'LH-DELIV6', at(7.5), T0);
+  assert.ok(o7 && o7.fee >= 36 && o7.fee <= 39, 'fee added for 7.5 km');
+  const v7 = LH.validateOrder({ ...at(7.5), ts: T0, it: [['masala-tea', 2], ['veg-momos', 1]] }), v0 = LH.validateOrder({ ...dd('LH-DELIV6'), ts: T0, it: [['masala-tea', 2], ['veg-momos', 1]] });
+  assert.strictEqual(v7.total - v0.total, v7.fee, 'fee is added to the total');
+  assert.match(lib.confirmEmail(LH, o7).text, new RegExp(`Delivery  ₹${o7.fee}`));
+  assert.ok(lib.toOrder(LH, 'LH-DELIV7', at(14.5), T0), '14.5 km accepted');
+  assert.strictEqual(lib.toOrder(LH, 'LH-DELIV8', at(16), T0), null, '16 km rejected');
+  assert.match(lib.confirmEmail(LH, lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1'), T0)).text, /Delivery  Free/);
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV3', dd('LH-DELIV3', { addr: 'x' }), T0), null, 'short address rejected');
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV4', dd('LH-DELIV4', { lat: undefined }), T0), null, 'missing coordinates rejected');
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV5', dd('LH-DELIV5', { p: '12345' }), T0), null, 'short phone rejected for delivery');

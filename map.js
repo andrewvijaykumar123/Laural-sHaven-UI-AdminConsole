@@ -35,7 +35,7 @@
    */
   async function create(el, opts = {}) {
     const L = await load();
-    const { SHOP, DELIVERY_KM } = LH;
+    const { SHOP, DELIVERY_KM, FREE_KM, MID_KM } = LH;
     const map = L.map(el, {
       zoomControl: true, scrollWheelZoom: false, attributionControl: true,
       dragging: opts.pan !== false || !L.Browser.mobile, touchZoom: opts.pan !== false || !L.Browser.mobile
@@ -48,7 +48,9 @@
     const shopPt = L.latLng(SHOP.lat, SHOP.lng);
     const areaBounds = shopPt.toBounds(DELIVERY_KM * 2000); // bounds of the delivery circle; Circle#getBounds needs a ready map
     map.setView(shopPt, 12);
-    L.circle(shopPt, { radius: DELIVERY_KM * 1000, color: '#ff7a45', weight: 2, dashArray: '6 6', fillColor: '#ff7a45', fillOpacity: 0.07, interactive: false }).addTo(map);
+    [[DELIVERY_KM, 0.04, '#ff7a45'], [MID_KM, 0.05, '#ff7a45'], [FREE_KM, 0.09, '#34d399']].forEach(([km, fill, color]) => {
+      L.circle(shopPt, { radius: km * 1000, color, weight: 2, dashArray: '6 6', fillColor: color, fillOpacity: fill, interactive: false }).addTo(map);
+    });
     L.marker(shopPt, { icon: pin(L, 'shop', '🍃'), keyboard: false, title: "Laural's Haven" }).addTo(map);
     map.fitBounds(areaBounds, { padding: [6, 6] });
 

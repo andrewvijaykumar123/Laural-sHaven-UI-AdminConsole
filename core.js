@@ -94,7 +94,9 @@
 
   /* ---------- Delivery area: straight-line distance from the cafe ---------- */
   const SHOP = { lat: 12.847503004009383, lng: 80.19645821775838 };
-  const DELIVERY_KM = 5;
+  const DELIVERY_KM = 15; // farthest we deliver
+  // Delivery fee by straight-line km: free up to FREE_KM, Rs 15/km from 5 to 10 km, Rs 20/km beyond 10 km.
+  const FREE_KM = 5, MID_KM = 10, RATE_MID = 15, RATE_FAR = 20;
   const validPoint = (lat, lng) => typeof lat === 'number' && typeof lng === 'number' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && Number.isFinite(lat) && Number.isFinite(lng);
   const distKm = (a, b) => {
     const rad = Math.PI / 180;
@@ -104,6 +106,10 @@
   };
   const fromShopKm = (lat, lng) => distKm(SHOP, { lat, lng });
   const inRange = (lat, lng) => validPoint(lat, lng) && fromShopKm(lat, lng) <= DELIVERY_KM;
+  const deliveryFee = (km) => {
+    const k = Math.round(km * 10) / 10;
+    return Math.round(RATE_MID * Math.max(0, Math.min(k, MID_KM) - FREE_KM) + RATE_FAR * Math.max(0, k - MID_KM));
+  };
   // Rough ride time: roads are about 1.35x the straight line, at about 22 km/h through traffic.
   const etaMin = (km) => Math.max(1, Math.round((km * 1.35 / 22) * 60));
   const r5 = (n) => Math.round(n * 1e5) / 1e5;
@@ -171,6 +177,8 @@
       const addr = clean(o.addr, 200);
       if (addr.length < 8 || !inRange(o.lat, o.lng)) return null;
       Object.assign(out, { addr, lat: r5(o.lat), lng: r5(o.lng) });
+      out.fee = deliveryFee(fromShopKm(out.lat, out.lng));
+      out.total += out.fee;
     }
     return out;
   }
@@ -237,7 +245,7 @@
     return Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))]);
   }
 
-  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl, ...(o.svc === 'deliver' ? { addr: o.addr, lat: o.lat, lng: o.lng } : {}) });
+  const toDoc = (o) => ({ id: o.id, n: o.n, p: o.p, ...(o.em ? { em: o.em } : {}), nt: o.nt, it: o.it.map(([id, q]) => `${id}:${q}`), total: o.total, pay: o.pay, svc: o.svc, tbl: o.tbl, ...(o.svc === 'deliver' ? { addr: o.addr, lat: o.lat, lng: o.lng, fee: o.fee } : {}) });
   const fromDoc = (d) => validateOrder({
     id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl,
     addr: d.addr, lat: d.lat, lng: d.lng,
@@ -417,7 +425,7 @@
 
   window.LH = {
     UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
-    SHOP, DELIVERY_KM, distKm, fromShopKm, inRange, validPoint, etaMin,
+    SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, priceLines, validateOrder,
     store, now, on, emit, init, connect, watch, flush,
     publishOrder, publishAdmin, admin: adminAuth,

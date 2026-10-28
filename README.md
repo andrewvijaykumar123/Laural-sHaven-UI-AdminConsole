@@ -15,7 +15,7 @@ Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it f
 ## Home delivery and live tracking
 
 1. Publish the updated `firestore.rules` first (delivery orders are rejected until you do).
-2. Menu & stock, turn on **Home delivery**. Customers within 5 km (straight line from the cafe) can then order delivery; everyone else sees a polite "not available yet" message. Delivery is free and paid in cash on delivery or by UPI.
+2. Menu & stock, turn on **Home delivery**. Customers up to 15 km from the cafe (straight line) can then order delivery; everyone else sees a polite "not available yet" message. Delivery is free within 5 km, then ₹15 per km from 5 to 10 km and ₹20 per km beyond 10 km (rounded to whole rupees, added to the bill). Payment is cash on delivery or UPI. The rates live in `core.js` (`DELIVERY_KM`, `FREE_KM`, `MID_KM`, `RATE_MID`, `RATE_FAR`) and in `firestore.rules` (`shopKm`, `minFee`, 15.1 limit); change both together.
 3. Rider: sign in on the phone, mark the order **Out for delivery** and tap **Share location** (allow location, keep the screen on). Customers follow the rider on an OpenStreetMap map.
 
 The rider's location is stored on the order's `status/{id}` document, which anyone holding the order id can read, and is erased when the order completes. `map.js`, `map.css` and `vendor/leaflet/` are copies of the storefront files and must stay identical. Map tiles come from the public OpenStreetMap servers; keep traffic light or switch to a tile provider for heavy use.

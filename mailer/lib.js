@@ -44,13 +44,14 @@ function itemsTable(LH, o) {
     const it = LH.ITEMS.get(id);
     return `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">${q} &times; ${LH.esc(it.name)}</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${LH.esc(LH.fmt(it.price * q))}</td></tr>`;
   }).join('');
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">${rows}
+  const feeRow = o.svc === 'deliver' ? `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">Delivery</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${o.fee ? LH.esc(LH.fmt(o.fee)) : 'Free'}</td></tr>` : '';
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">${rows}${feeRow}
 <tr><td style="padding-top:10px;font-weight:700">Total</td><td align="right" style="padding-top:10px;font-weight:700">${LH.esc(LH.fmt(o.total))}</td></tr></table>`;
 }
 
 const where = (o) => (o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? `Delivery to ${o.addr}` : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
 const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
-const textItems = (LH, o) => o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`).join('\n');
+const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
 
 function confirmEmail(LH, o, ctx = {}) {
   const prep = Number(ctx.prep) > 0 ? ` It should be ready in about ${Number(ctx.prep)} minutes.` : '';
@@ -202,10 +203,10 @@ function buildReport(LH, rows) {
 
 const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
 function reportCsv(LH, rows) {
-  const head = ['Order', 'Time (IST)', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Reason', 'Note', 'Address', 'Latitude', 'Longitude'];
+  const head = ['Order', 'Time (IST)', 'Name', 'Phone', 'Email', 'Service', 'Table', 'Items', 'Total', 'Payment', 'Payment verified', 'Status', 'Reason', 'Note', 'Address', 'Latitude', 'Longitude', 'Delivery fee'];
   const body = [...rows].sort((a, b) => a.o.ts - b.o.ts).map(({ o, s, v, r }) => [
     o.id, new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' '), o.n, o.p, o.em, o.svc, o.tbl,
-    o.it.map(([id, q]) => `${q}x ${LH.ITEMS.get(id).name}`).join('; '), o.total, o.pay, v ? 'yes' : 'no', s, r || '', o.nt, o.addr || '', o.lat ?? '', o.lng ?? ''  ]);
+    o.it.map(([id, q]) => `${q}x ${LH.ITEMS.get(id).name}`).join('; '), o.total, o.pay, v ? 'yes' : 'no', s, r || '', o.nt, o.addr || '', o.lat ?? '', o.lng ?? '', o.fee ?? ''  ]);
   return [head, ...body].map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
 

@@ -24,26 +24,32 @@ service cloud.firestore {
       return exists(path) && get(path).data.get('del', false) == true;
     }
 
-    // Cafe is at 12.847503, 80.196458. Flat-earth distance in km^2 (1 deg lat = 110.63 km, 1 deg lng = 108.55 km here).
-    // 25.5 km^2 allows 5.05 km, a little slack over the 5 km the app checks.
-    function withinRange(d) {
+    // Cafe is at 12.847503, 80.196458. Flat-earth distance in km (1 deg lat = 110.63 km, 1 deg lng = 108.55 km here).
+    function shopKm(d) {
       let dy = (d.lat - 12.847503) * 110.63;
       let dx = (d.lng - 80.196458) * 108.55;
-      return dy * dy + dx * dx <= 25.5;
+      return math.sqrt(dx * dx + dy * dy);
     }
 
+    // Delivery fee: free to 5 km, Rs 15/km from 5 to 10 km, Rs 20/km beyond 10 km. The client rounds to whole rupees, so allow Rs 2 of slack.
+    function minFee(km) {
+      return km > 10 ? 75 + 20 * (km - 10) - 2 : (km > 5 ? 15 * (km - 5) - 2 : 0);
+    }
+
+    // Farthest delivery is 15 km (15.1 allows for the flat-earth approximation).
     function validDelivery(d) {
       return deliveryOn()
-        && d.keys().hasAll(['addr', 'lat', 'lng'])
+        && d.keys().hasAll(['addr', 'lat', 'lng', 'fee'])
         && d.addr is string && d.addr.size() >= 8 && d.addr.size() <= 200 && !d.addr.matches('.*[<>].*')
         && (d.lat is float || d.lat is int) && (d.lng is float || d.lng is int)
         && d.lat >= -90 && d.lat <= 90 && d.lng >= -180 && d.lng <= 180
-        && withinRange(d)
+        && shopKm(d) <= 15.1
+        && d.fee is int && d.fee >= 0 && d.fee <= 500 && d.fee >= minFee(shopKm(d))
         && d.p.matches('^[+0-9]{10,16}$');
     }
 
     function validOrder(d, id) {
-      return d.keys().hasOnly(['id', 'n', 'p', 'em', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at', 'addr', 'lat', 'lng'])
+      return d.keys().hasOnly(['id', 'n', 'p', 'em', 'nt', 'it', 'total', 'pay', 'svc', 'tbl', 'uid', 'at', 'addr', 'lat', 'lng', 'fee'])
         && d.keys().hasAll(['id', 'n', 'p', 'it', 'total', 'pay', 'svc', 'uid', 'at'])
         && d.id == id
         && d.uid == request.auth.uid
@@ -57,7 +63,7 @@ service cloud.firestore {
         && d.total is int && d.total > 0 && d.total <= 100000
         && d.pay in ['upi', 'counter']
         && d.svc in ['dine', 'take', 'deliver']
-        && (d.svc == 'deliver' ? validDelivery(d) : !(('addr' in d) || ('lat' in d) || ('lng' in d)));
+        && (d.svc == 'deliver' ? validDelivery(d) : !(('addr' in d) || ('lat' in d) || ('lng' in d) || ('fee' in d)));
     }
 
     // Private: only the admin can read orders. Customers can only create them, and only while the store is open.
