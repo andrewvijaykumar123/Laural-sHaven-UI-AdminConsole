@@ -96,6 +96,7 @@ async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = c
     const st = (await store.status(o.id)) || {};
     const s = LH.STATUS[st.s] ? st.s : 'pending';
     const mail = (await store.mail(o.id)) || {};
+    (stats.orders = stats.orders || []).push(`${o.id}:${s}:c${mail.c ? 1 : 0}r${mail.r ? 1 : 0}x${mail.x ? 1 : 0}f${mail.f || 0}`);
     if ((mail.f || 0) >= MAX_FAILS) continue;
 
     const jobs = [];
@@ -120,7 +121,7 @@ async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = c
         stats.failed++;
         mail.f = (mail.f || 0) + 1;
         await store.setMail(o.id, { f: mail.f });
-        log(`failed ${key} for ${o.id}: ${e && (e.code || e.responseCode) || 'error'}`);
+        log(`::warning title=mailer::failed ${key} for ${o.id}: ${e && (e.code || e.responseCode) || 'error'}`);
         break;
       }
     }
