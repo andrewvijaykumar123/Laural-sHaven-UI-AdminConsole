@@ -7,7 +7,10 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const SESSION_MS = 12 * 60 * 60 * 1000;
+  const IDLE_MS = 90 * 60 * 1000;
+  let lastTouch = 0;
+  const touch = (force) => { const n = Date.now(); if (force || n - lastTouch > 10000) { lastTouch = n; store.set('lastActive', n); } };
+  const idleLeft = () => Number(store.get('lastActive', 0)) + IDLE_MS - Date.now();
 
   /* ---------- Theme ---------- */
   const setTheme = (t) => { document.documentElement.dataset.theme = t; store.set('theme', t); };
@@ -47,8 +50,8 @@
       await LH.admin.signIn($('#email').value.trim(), $('#pw').value);
       $('#pw').value = '';
       store.del('fails');
-      store.set('loginAt', Date.now());
-      start(Date.now() + SESSION_MS);
+      touch(true);
+      start();
     } catch (err) {
       const fails = Number(store.get('fails', 0)) + 1;
       store.set('fails', fails);
@@ -60,7 +63,7 @@
 
   async function lock() {
     try { await LH.admin.signOut(); } catch (e) { /* ignore */ }
-    store.del('loginAt');
+    store.del('lastActive');
     store.del('orders');
     location.reload();
   }
@@ -70,8 +73,7 @@
   (async () => {
     try {
       const user = await LH.admin.current();
-      const exp = Number(store.get('loginAt', 0)) + SESSION_MS;
-      if (user && exp > Date.now()) { start(exp); return; }
+      if (user && idleLeft() > 0) { touch(true); start(); return; }
       if (user) await LH.admin.signOut();
     } catch (e) { /* not signed in */ }
     $('#lock').hidden = false;
@@ -93,12 +95,15 @@
   const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const money = (arr) => arr.reduce((s, o) => s + o.total, 0);
 
-  function start(expiry) {
+  function start() {
     if (started) return;
     started = true;
     $('#lock').hidden = true;
     $('#app').hidden = false;
-    setTimeout(lock, Math.max(1000, expiry - Date.now()));
+    ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach((ev) => window.addEventListener(ev, () => touch(), { passive: true, capture: true }));
+    const checkIdle = () => { if (idleLeft() <= 0) lock(); };
+    setInterval(checkIdle, 15000);
+    document.addEventListener('visibilitychange', checkIdle);
 
     clearTs = Number(store.get('clearTs', 0)) || 0;
     meta = store.get('meta', {});

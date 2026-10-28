@@ -104,7 +104,7 @@
           <div class="panel"><h3>Data</h3><p class="muted">Orders sync live through Firebase and are also cached on this device.</p>
             <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
             <button class="btn danger sm" id="clearBoard">Clear board for everyone</button></div></div>
-          <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are readable only by the signed-in admin account (Firestore security rules).</li><li>Customers can create orders but never read other customers' orders.</li><li>Session auto-locks after 12 hours.</li><li>Change the password in Firebase Console, Authentication.</li></ul></div>
+          <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are readable only by the signed-in admin account (Firestore security rules).</li><li>Customers can create orders but never read other customers' orders.</li><li>Session auto-locks after 90 minutes of inactivity.</li><li>Change the password in Firebase Console, Authentication.</li></ul></div>
         </div>
       </section>
     </div>
@@ -117,6 +117,6 @@
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
   <script src="core.js?v=20261028a"></script>
-  <script src="app.js?v=20261028b"></script>
+  <script src="app.js?v=20261028c"></script>
 </body>
 </html>
