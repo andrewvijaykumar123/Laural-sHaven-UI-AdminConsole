@@ -1,0 +1,12 @@
+{
+  "name": "laurals-haven-admin-console",
+  "private": true,
+  "description": "Test scripts only. The site itself is static and needs no build step.",
+  "scripts": {
+    "test": "node mailer/test.js && node worker/test.js",
+    "e2e": "node e2e/run.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.47.0"
+  }
+}

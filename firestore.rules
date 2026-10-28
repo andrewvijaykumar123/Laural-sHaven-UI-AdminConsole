@@ -80,6 +80,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Instant emails: mail/{id} records which emails were sent; mailq/{id}_{key} is a create-only claim so that
+    // when several admin devices are open only one of them sends a given email.
+    match /mail/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /mailq/{id} {
+      allow read, delete: if isAdmin();
+      allow create: if isAdmin() && id.matches('LH-[A-Z0-9]{6,10}_[pcorx]');
+      allow update: if false;
+    }
+
     // Open/closed, sold-out items, prep time and banner.
     match /config/{doc} {
       allow read: if true;

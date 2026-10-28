@@ -297,7 +297,8 @@
   }
 
   async function publishAdmin(f) {
-    if (!(await adminUser())) throw new Error('Console is locked');
+    const admin = await adminUser();
+    if (!admin) throw new Error('Console is locked');
     const FB = window.LH_FB;
     const { db } = firebase();
     const ts = now();
@@ -322,6 +323,25 @@
         open: !!f.open, oos: (Array.isArray(f.oos) ? f.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
         prep: Math.min(180, Math.max(1, Math.floor(Number(f.prep)) || 12)), note: clean(f.note, 120), del: f.del === true, ts
       }, { merge: true }));
+    }
+    /* Instant emails. mailq/{id}_{key} is a create-only claim (the rules refuse updates), so when several admin devices are open
+       only the first one to claim an email sends it. mail/{id} records what was sent; the scheduled mailer reads it. */
+    if (f.k === 'mailclaim' || f.k === 'mailrel' || f.k === 'mail') {
+      if (!validId(f.id) || !/^[pcorx]$/.test(f.key)) throw new Error('Invalid mail key');
+      const claim = FB.doc(db, 'mailq', `${f.id}_${f.key}`);
+      if (f.k === 'mailclaim') {
+        // No local-cache shortcut here: wait for the server's verdict (8 s at most, then treat as not claimed).
+        const verdict = FB.setDoc(claim, { o: f.id, k: f.key, at: FB.serverTimestamp(), by: admin.uid });
+        verdict.catch(() => {});
+        return Promise.race([verdict, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Claim timed out'), { code: 'deadline-exceeded' })), 8000))]);
+      }
+      if (f.k === 'mailrel') { const b = FB.writeBatch(db); b.delete(claim); return write(b.commit()); }
+      return write(FB.setDoc(FB.doc(db, 'mail', f.id), { [f.key]: ts }, { merge: true }));
+    }
+    if (f.k === 'mailseen') {
+      if (!validId(f.id)) throw new Error('Invalid order');
+      const snap = await FB.getDocs(FB.query(FB.collection(db, 'mailq'), FB.where('o', '==', f.id)));
+      return snap.docs.map((d) => d.data().k);
     }
     if (f.k === 'clr') return clearBoard(ts);
     throw new Error('Unknown action');

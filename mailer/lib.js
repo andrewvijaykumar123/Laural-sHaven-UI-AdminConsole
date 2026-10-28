@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const IST_MS = 330 * 60000;
-const SHOP = "Laural's Haven";
+const tpl = require('../mailtpl.js');
+const { IST_MS, SHOP, BRAND, shell, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, receivedEmail } = tpl;
 const MAX_FAILS = 3;
 const WINDOW_MS = 48 * 3600000;
 
@@ -23,86 +23,10 @@ function loadCore() {
 function toOrder(LH, id, d, tsMs) {
   const it = (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; });
   const o = LH.validateOrder({ id, ts: tsMs, n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, it });
-  if (o && Number.isInteger(d.total) && d.total > 0) o.total = d.total;
   return o;
 }
 
-/* ---------- Email layout ---------- */
-const BRAND = '#b45309';
-function shell(LH, title, inner) {
-  return `<!doctype html><html><body style="margin:0;background:#f6f1ea;font-family:Segoe UI,Arial,sans-serif;color:#1f2937">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden">
-<tr><td style="background:${BRAND};color:#ffffff;padding:20px 24px"><div style="font-size:20px;font-weight:700">${LH.esc(SHOP)}</div><div style="font-size:13px;opacity:.9">${LH.esc(title)}</div></td></tr>
-<tr><td style="padding:24px">${inner}</td></tr>
-<tr><td style="padding:14px 24px;background:#faf7f2;color:#6b7280;font-size:12px">You received this because an email address was entered when this order was placed. If that was not you, please ignore this message.</td></tr>
-</table></td></tr></table></body></html>`;
-}
-
-function itemsTable(LH, o) {
-  const rows = o.it.map(([id, q]) => {
-    const it = LH.ITEMS.get(id);
-    return `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">${q} &times; ${LH.esc(it.name)}</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${LH.esc(LH.fmt(it.price * q))}</td></tr>`;
-  }).join('');
-  const feeRow = o.svc === 'deliver' ? `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">Delivery</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${o.fee ? LH.esc(LH.fmt(o.fee)) : 'Free'}</td></tr>` : '';
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">${rows}${feeRow}
-<tr><td style="padding-top:10px;font-weight:700">Total</td><td align="right" style="padding-top:10px;font-weight:700">${LH.esc(LH.fmt(o.total))}</td></tr></table>`;
-}
-
-const where = (o) => (o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? `Delivery to ${o.addr}` : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
-const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
-const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
-
-function confirmEmail(LH, o, ctx = {}) {
-  const prep = Number(ctx.prep) > 0 ? ` It should be ready in about ${Number(ctx.prep)} minutes.` : '';
-  const subject = `Order ${o.id} confirmed - ${SHOP}`;
-  const html = shell(LH, `Order confirmed and bill`, `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is confirmed.${LH.esc(prep)}</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, ctx.paid))}<br>Placed ${LH.esc(new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' '))} IST</p>
-${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${o.svc === 'deliver' ? 'We will email you when it is on the way. You can also follow the rider live on our website.' : 'We will email you again when it is ready.'}</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\n${o.svc === 'deliver' ? 'We will email you when it is on the way.' : 'We will email you again when it is ready.'}\n- ${SHOP}`;
-  return { subject, html, text };
-}
-
-function outEmail(LH, o) {
-  const subject = `Order ${o.id} is on the way - ${SHOP}`;
-  const html = shell(LH, 'Out for delivery', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is out for delivery to ${LH.esc(o.addr)}.</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(payLine(o, false))}. Open our website on the device you ordered from to follow the rider live on the map.</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is out for delivery to ${o.addr}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n${payLine(o, false)}\n\nOpen our website on the device you ordered from to follow the rider live.\n- ${SHOP}`;
-  return { subject, html, text };
-}
-
-function readyEmail(LH, o) {
-  const how = o.svc === 'take' ? 'Please collect it at the counter.' : `We will bring it to ${o.tbl ? `table ${o.tbl}` : 'your table'}.`;
-  const subject = `Order ${o.id} is ready - ${SHOP}`;
-  const html = shell(LH, 'Your order is ready', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ready. ${LH.esc(how)}</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}.</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is ready. ${how}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
-  return { subject, html, text };
-}
-
-function doneEmail(LH, o) {
-  const del = o.svc === 'deliver';
-  const subject = `Order ${o.id} is ${del ? 'delivered' : 'complete'} - ${SHOP}`;
-  const html = shell(LH, del ? 'Your order was delivered' : 'Your order is complete', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}. We look forward to seeing you again.</p>`);
-  const text = `Hi ${o.n}, your order ${o.id} is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
-  return { subject, html, text };
-}
-
-function rejectEmail(LH, o, reason) {
-  const why = reason ? ` Reason: ${reason}.` : '';
-  const subject = `Order ${o.id} could not be accepted - ${SHOP}`;
-  const html = shell(LH, 'Order update', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, we are sorry, we could not accept your order <b>${LH.esc(o.id)}</b>.${LH.esc(why)}</p>
-<p style="margin:0;font-size:13px;color:#4b5563">If you have paid, please speak to our staff and we will make it right. You are welcome to order again.</p>`);
-  const text = `Hi ${o.n}, we are sorry, we could not accept your order ${o.id}.${why}\nIf you have paid, please speak to our staff. You are welcome to order again.\n- ${SHOP}`;
-  return { subject, html, text };
-}
-
+/* ---------- Email layout and rules live in ../mailtpl.js (shared with the admin console's instant sender) ---------- */
 /* ---------- Per-order sweep (idempotent; state lives in the mail/{id} documents) ---------- */
 async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = console.log }) {
   const cfg = (await store.config()) || {};
@@ -116,22 +40,15 @@ async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = c
     const st = (await store.status(o.id)) || {};
     const s = LH.STATUS[st.s] ? st.s : 'pending';
     const mail = (await store.mail(o.id)) || {};
-    (stats.orders = stats.orders || []).push(`${o.id}:${s}:c${mail.c ? 1 : 0}r${mail.r ? 1 : 0}x${mail.x ? 1 : 0}f${mail.f || 0}`);
+    (stats.orders = stats.orders || []).push(`${o.id}:${s}:p${mail.p ? 1 : 0}c${mail.c ? 1 : 0}r${mail.r ? 1 : 0}x${mail.x ? 1 : 0}f${mail.f || 0}`);
     if ((mail.f || 0) >= MAX_FAILS) continue;
 
-    const jobs = [];
-    if (s === 'rejected') { if (!mail.x) jobs.push(['x', rejectEmail(LH, o, st.r)]); }
-    else {
-      if (!mail.c && s !== 'pending') jobs.push(['c', confirmEmail(LH, o, { prep: cfg.prep, paid: !!st.v })]);
-      const del = o.svc === 'deliver';
-      const needR = !mail.r || mail.r === -1;
-      if (del && !mail.o && s === 'out') jobs.push(['o', outEmail(LH, o)]);
-      if (needR && s === 'ready' && !del) jobs.push(['r', readyEmail(LH, o)]);
-      if (needR && s === 'completed') jobs.push(['r', doneEmail(LH, o)]);
-    }
+    const jobs = tpl.plan(LH, o, { s, r: st.r, v: st.v }, mail, { prep: cfg.prep });
 
     for (const [key, msg] of jobs) {
       if (stats.sent >= maxSends) return stats;
+      // Another device is sending this very email through the instant path: leave it alone.
+      if (store.claimed && (await store.claimed(o.id, key, now))) { stats.skipped++; break; }
       try {
         await send({ to: o.em, ...msg });
         const patch = { [key]: now };
@@ -262,4 +179,4 @@ async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   return msg.stats;
 }
 
-module.exports = { loadCore, toOrder, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
+module.exports = { loadCore, toOrder, plan: tpl.plan, receivedEmail, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };

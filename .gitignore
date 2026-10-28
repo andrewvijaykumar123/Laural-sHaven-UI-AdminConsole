@@ -2,3 +2,6 @@ node_modules/
 tools/fb/fb.js
 mailer/out/
 firebase-debug.log
+e2e/out/
+e2e/run.log
+e2e/run.err

@@ -119,6 +119,13 @@
     LH.connect('orders');
     LH.connect('ops');
     setInterval(() => { if (!document.hidden) renderBoard(); }, 30000);
+    // A new order that nobody has accepted keeps chiming once a minute (for up to 30 minutes) so it is never missed.
+    setInterval(() => {
+      const waiting = [...orders.values()].filter((o) => statusOf(o.id) === 'pending' && Date.now() - o.ts > 60000 && Date.now() - o.ts < 30 * 60000).length;
+      if (!waiting) return;
+      chime();
+      toast(`${waiting} order${waiting === 1 ? ' is' : 's are'} still waiting to be accepted`, 'bad');
+    }, 60000);
   }
 
   const readDraft = () => { const c = LH.getCfg(); return { open: c.open, oos: new Set(c.oos), prep: c.prep, note: c.note, del: !!c.del }; };
@@ -130,6 +137,7 @@
     saveOrders();
     const live = Date.now() - o.ts < 3 * 60 * 1000;
     if (live) { fresh.add(o.id); announce(o); }
+    if (Date.now() - o.ts < MAIL_FRESH_MS) mailOrder(o.id);
     scheduleRender();
   });
   LH.on('status', ({ id, s, r, ts }) => {
@@ -138,6 +146,7 @@
     m.s = s; m.r = r; m.sts = ts;
     if (s !== 'out') delete m.loc;
     saveMeta(); pruneRide(); scheduleRender();
+    if (Date.now() - ts < MAIL_FRESH_MS) mailOrder(id);
   });
   LH.on('loc', ({ id, lat, lng, acc, lts }) => {
     const m = meta[id] || (meta[id] = {});
@@ -202,7 +211,6 @@
         if (isMobileDevice()) startRide(id); else toast('Out for delivery. On the rider\'s phone, open this console and tap "Share location".', 'ok');
       }
       if (s === 'completed' || s === 'rejected') stopRide(id);
-      if (['accepted', 'rejected', 'ready', 'out', 'completed'].includes(s)) kickMailer();
     } catch (e) { toast('Could not update the order.', 'bad'); }
   }
 
@@ -240,11 +248,85 @@
       let ok = false;
       try { ok = await dispatchWorkflow('mailer.yml'); } catch (e) { mailErr = 'network or CORS error'; }
       if (!ok) toast(`Could not start the email service now${mailErr ? ` (${mailErr})` : ''}. Emails will go out within 15 minutes.`, 'bad');
-    }, 2500);
+    }, 600);
   }
+
+  /* Instant emails: the relay sends through Gmail in a few seconds, as soon as an order arrives or changes status.
+     If the relay cannot (not set up, rules not published, offline) the scheduled GitHub mailer picks the email up instead. */
+  const MAIL_FRESH_MS = 10 * 60 * 1000;
+  const mailSent = store.get('mailSent', {});
+  const mailBusy = new Set();
+  let mailOffUntil = 0;
+  let mailMode = 'unknown'; // unknown | instant | fallback
+  const saveMailSent = () => {
+    const ids = Object.keys(mailSent);
+    if (ids.length > 400) ids.slice(0, ids.length - 400).forEach((id) => delete mailSent[id]);
+    store.set('mailSent', mailSent);
+  };
+  async function postMail(to, msg) {
+    const u = await LH.admin.current();
+    if (!u) return { ok: false, status: 401, detail: 'not signed in' };
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const r = await fetch(`${MAIL_RELAY}/send`, {
+        method: 'POST', signal: ctl.signal,
+        headers: { Authorization: `Bearer ${await u.getIdToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, subject: msg.subject, text: msg.text, html: msg.html })
+      });
+      return { ok: r.status === 204, status: r.status, detail: r.status === 204 ? '' : (await r.text()).slice(0, 160) };
+    } catch (e) { return { ok: false, status: 0, detail: 'network or timeout' }; } finally { clearTimeout(timer); }
+  }
+  const setMailMode = (m, why) => { mailMode = m; mailErr = why || ''; if (typeof renderMail === 'function' && $('#mailState')) renderMail(); };
+
+  async function mailOrder(id) {
+    const first = orders.get(id);
+    if (!MAIL_RELAY || !window.LHMail || mailBusy.has(id) || !first || !first.em) return;
+    if (Date.now() < mailOffUntil) { kickMailer(); return; }
+    mailBusy.add(id);
+    try {
+      for (let guard = 0; guard < 4; guard++) {
+        const o = orders.get(id);
+        if (!o || !o.em) break;
+        const m = meta[id] || {};
+        const done = mailSent[id] || (mailSent[id] = {});
+        const job = window.LHMail.plan(LH, o, { s: statusOf(id), r: m.r, v: !!m.v }, done, { prep: LH.getCfg().prep })[0];
+        if (!job) break;
+        const [key, msg] = job;
+        try {
+          await LH.publishAdmin({ k: 'mailclaim', id, key });
+        } catch (e) {
+          if (e && e.code === 'permission-denied') {
+            // Either another device already claimed it, or the new rules are not published yet; reading the claims tells which.
+            const seen = await LH.publishAdmin({ k: 'mailseen', id });
+            if (seen.includes(key)) { done[key] = Date.now(); saveMailSent(); continue; }
+          }
+          throw e;
+        }
+        const res = await postMail(o.em, msg);
+        if (!res.ok) {
+          try { await LH.publishAdmin({ k: 'mailrel', id, key }); } catch (e) { /* the scheduled mailer skips stale claims */ }
+          mailOffUntil = Date.now() + ([400, 404, 405, 501].includes(res.status) ? 30 * 60000 : 60000);
+          setMailMode('fallback', `${res.status || 'offline'} ${res.detail}`.trim());
+          kickMailer();
+          break;
+        }
+        done[key] = Date.now(); saveMailSent();
+        setMailMode('instant');
+        LH.publishAdmin({ k: 'mail', id, key }).catch(() => {});
+      }
+    } catch (e) {
+      mailOffUntil = Date.now() + 5 * 60000;
+      setMailMode('fallback', e && e.code === 'permission-denied' ? 'Firestore rules for email are not published yet' : 'could not reach the email service');
+      kickMailer();
+    } finally { mailBusy.delete(id); }
+  }
+  window.__lhMail = { mailOrder, get sent() { return mailSent; } };
   function renderMail() {
     const on = !!MAIL_RELAY || !!store.get('ghToken', '');
-    $('#mailState').textContent = on ? 'Instant emails are on for this device.' : 'Instant emails are off. Emails go out within about 15 minutes.';
+    $('#mailState').textContent = mailMode === 'instant' ? 'Instant emails are on: customers get them within seconds.'
+      : mailMode === 'fallback' ? `Instant sending is not available${mailErr ? ` (${mailErr})` : ''}, so emails go out through GitHub within about a minute.`
+        : on ? 'Instant emails are on for this device.' : 'Instant emails are off. Emails go out within about 15 minutes.';
     $('#ghClear').hidden = !on || !!MAIL_RELAY; $('#mailNow').hidden = !on; $('#reportNow').hidden = !on;
     if (MAIL_RELAY) { $('#ghToken').style.display = 'none'; $('#ghSave').hidden = true; }
   }
@@ -497,7 +579,7 @@
     const late = s === 'pending' && Date.now() - o.ts > 5 * 60000;
     const del = o.svc === 'deliver';
     const svcChip = o.svc === 'take' ? 'Takeaway' : del ? `🛵 Delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km · ${o.fee ? `${fmt(o.fee)} fee` : 'free'}` : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`;
-    const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">� Track</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
+    const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">📍 Track</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
     return `<article class="ocard ${fresh.has(o.id) ? 'fresh' : ''}" draggable="${LH.nextFor(o, s).length ? 'true' : 'false'}" data-id="${esc(o.id)}" style="--c:${STATUS[s].color}">
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
       <div class="oc-cust"><b>${esc(o.n)}</b><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>

@@ -27,22 +27,38 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'A@B.CO', it: [['masala-tea', 1]] }).em, 'a@b.co');
   assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'nope', it: [['masala-tea', 1]] }).em, '');
 
-  // pending: nothing; accepted: confirm; ready: ready; repeat: nothing
+  // pending: received; accepted: confirm; ready: ready; repeat: nothing
   const orders = [{ id: 'LH-AAAAAA', data: doc('LH-AAAAAA'), ts: T0 - 600000 }];
   const statuses = {}; const mails = {};
   const run = () => lib.sweep({ store: fake(orders, statuses, mails), send, LH, now: T0, log: () => {} });
-  await run(); assert.strictEqual(outbox.length, 0, 'pending sends nothing');
+  await run(); assert.strictEqual(outbox.length, 1, 'pending sends the received email'); assert.match(outbox[0].subject, /received/);
+  await run(); assert.strictEqual(outbox.length, 1, 'received is sent once');
   statuses['LH-AAAAAA'] = { s: 'accepted' };
-  await run(); assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /confirmed/);
-  assert.ok(!outbox[0].html.includes('<b>Anita') && !outbox[0].html.includes('Anita <b>'), 'markup in names is neutralised');
-  await run(); assert.strictEqual(outbox.length, 1, 'no duplicate confirmation');
+  await run(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /confirmed/);
+  assert.ok(!outbox[1].html.includes('<b>Anita') && !outbox[1].html.includes('Anita <b>'), 'markup in names is neutralised');
+  await run(); assert.strictEqual(outbox.length, 2, 'no duplicate confirmation');
   statuses['LH-AAAAAA'] = { s: 'cooking' };
-  await run(); assert.strictEqual(outbox.length, 1);
+  await run(); assert.strictEqual(outbox.length, 2);
   statuses['LH-AAAAAA'] = { s: 'ready' };
-  await run(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /ready/);
+  await run(); assert.strictEqual(outbox.length, 3); assert.match(outbox[2].subject, /ready/);
   statuses['LH-AAAAAA'] = { s: 'completed' };
-  await run(); assert.strictEqual(outbox.length, 2, 'two emails per order at most');
+  await run(); assert.strictEqual(outbox.length, 3, 'three emails per dine-in order at most');
 
+  // an email another device is already sending (claimed) is left alone
+  outbox.length = 0;
+  const claimedStore = { ...fake([{ id: 'LH-GGGGGG', data: doc('LH-GGGGGG'), ts: T0 }], { 'LH-GGGGGG': { s: 'accepted' } }, {}), claimed: async () => true };
+  const cs = await lib.sweep({ store: claimedStore, send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 0); assert.strictEqual(cs.skipped, 1);
+
+  // the shared planner (also used by the admin console) never repeats an email
+  const po = lib.toOrder(LH, 'LH-HHHHHH', doc('LH-HHHHHH'), T0);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'pending' }, {}).map((j) => j[0]), ['p']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'pending' }, { p: 1 }).map((j) => j[0]), []);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'accepted' }, { p: 1 }).map((j) => j[0]), ['c']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, { p: 1, c: 1 }).map((j) => j[0]), ['r']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: 'x' }, { p: 1 }).map((j) => j[0]), ['x']);
+  assert.deepStrictEqual(lib.plan(LH, { ...po, em: '' }, { s: 'accepted' }, {}), []);
+  outbox.length = 0;
   // jumped straight to ready: both emails, in order
   outbox.length = 0;
   const o2 = [{ id: 'LH-BBBBBB', data: doc('LH-BBBBBB'), ts: T0 }];

@@ -24,6 +24,7 @@ function connect() {
     ordersBetween: async (a, b) => mapOrders(await db.collection('orders').where('at', '>=', admin.firestore.Timestamp.fromMillis(a)).where('at', '<', admin.firestore.Timestamp.fromMillis(b)).limit(2000).get()),
     status: async (id) => { const s = await db.doc(`status/${id}`).get(); return s.exists ? s.data() : null; },
     mail: async (id) => { const s = await db.doc(`mail/${id}`).get(); return s.exists ? s.data() : null; },
+    claimed: async (id, key, now) => { const s = await db.doc(`mailq/${id}_${key}`).get(); const at = s.exists && s.data().at; return !!(at && at.toMillis && now - at.toMillis() < 180000); },
     setMail: (id, patch) => db.doc(`mail/${id}`).set(patch, { merge: true })
   };
 }

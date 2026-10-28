@@ -38,6 +38,7 @@
     const { SHOP, DELIVERY_KM, FREE_KM, MID_KM } = LH;
     const map = L.map(el, {
       zoomControl: true, scrollWheelZoom: false, attributionControl: true,
+      zoomAnimation: false, // an animated zoom still running when the map is removed (drawer closed) throws inside Leaflet
       dragging: opts.pan !== false || !L.Browser.mobile, touchZoom: opts.pan !== false || !L.Browser.mobile
     });
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -54,7 +55,7 @@
     L.marker(shopPt, { icon: pin(L, 'shop', '🍃'), keyboard: false, title: "Laural's Haven" }).addTo(map);
     map.fitBounds(areaBounds, { padding: [6, 6] });
 
-    let me = null, rider = null, line = null, dest = null;
+    let me = null, rider = null, line = null, dest = null, gone = false;
     const ll = (lat, lng) => [lat, lng];
 
     function drawLine() {
@@ -91,8 +92,8 @@
         if (pts.length === 1) map.fitBounds(areaBounds, { padding: [6, 6] });
         else map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 17 });
       },
-      invalidate() { map.invalidateSize(); },
-      destroy() { if (ro) ro.disconnect(); map.remove(); }
+      invalidate() { if (!gone) map.invalidateSize(); },
+      destroy() { gone = true; if (ro) ro.disconnect(); map.stop(); map.remove(); }
     };
     if (opts.pick) {
       map.on('click', (e) => {
@@ -101,9 +102,9 @@
       });
     }
     // Drawers and sheets animate in; keep the tiles correct while the box changes size.
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => map.invalidateSize()) : null;
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (!gone) map.invalidateSize(); }) : null;
     if (ro) ro.observe(el);
-    setTimeout(() => map.invalidateSize(), 60);
+    setTimeout(() => { if (!gone) map.invalidateSize(); }, 60);
     return ctl;
   }
 

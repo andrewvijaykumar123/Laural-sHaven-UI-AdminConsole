@@ -21,6 +21,25 @@ Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it f
 
 The rider's location is stored on the order's `status/{id}` document, which anyone holding the order id can read, and is erased when the order completes. `map.js`, `map.css` and `vendor/leaflet/` are copies of the storefront files and must stay identical. Map tiles come from the public OpenStreetMap servers; keep traffic light or switch to a tile provider for heavy use.
 
+## Instant order emails
+
+Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through Gmail SMTP. If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.
+
+One-time setup:
+
+1. Republish irestore.rules (adds the mail and mailq collections).
+2. In Cloudflare, redeploy the Worker with the contents of worker/relay.js and add the secret GMAIL_APP_PASSWORD (a Gmail app password for the sender account). The existing GH_TOKEN secret stays for the fallback.
+3. Keep the admin console open on at least one device while the cafe takes orders; emails are sent from there.
+
+## Tests
+
+`powershell
+node mailer/test.js    # email templates, planner and mailer
+node worker/test.js    # relay SMTP client against a fake server
+node e2e/run.js        # both web apps in Edge with a fake Firebase and relay (needs playwright-core; SHOP_DIR=..\Laural-sHaven-UI)
+`
+
+The end-to-end suite checks ordering, delivery tiers, live tracking, admin actions, email timing and de-duplication, fallbacks, analytics, CSV, layout and console errors. It replaces Firebase and SMTP with test doubles, so it cannot prove the real security rules or real mail delivery.
 ## Rebuild the Firebase bundle
 
 ```powershell
