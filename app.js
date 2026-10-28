@@ -138,7 +138,6 @@
     m.s = s; m.r = r; m.sts = ts;
     if (s !== 'out') delete m.loc;
     saveMeta(); pruneRide(); scheduleRender();
-    if (mapId === id) drawMap();
   });
   LH.on('loc', ({ id, lat, lng, acc, lts }) => {
     const m = meta[id] || (meta[id] = {});
@@ -146,7 +145,6 @@
     if (m.loc && m.loc.lts > lts) return;
     m.loc = { lat, lng, acc, lts: lts || Date.now() };
     saveMeta();
-    if (mapId === id) drawMap();
     scheduleRender();
   });
   LH.on('pay', ({ id, v, ts }) => {
@@ -319,7 +317,7 @@
     const since = Date.now() - ride.sentAt;
     const moved = ride.sent ? LH.distKm(ride.sent, ride.fix) * 1000 : Infinity;
     if (!ride.busy && ((moved >= 15 && since >= 8000) || since >= 30000)) sendFix();
-    if (mapId) drawMap();
+    if ($('#tab-deliveries').classList.contains('on')) renderDeliveries();
     renderRide();
   }
   function onFixError(err) {
@@ -374,52 +372,105 @@
     bar.innerHTML = `<div><b>📡 Sharing live location</b> for ${n} delivery order${n > 1 ? 's' : ''}<br><span class="muted">${line} · Keep this screen on and the console open.</span></div><button class="btn danger sm" data-ride-stop>Stop sharing</button>`;
   }
 
-  let mapId = null, mapCtl = null, mapToken = 0, mapUserMoved = false, mapFocus = null;
   function riderPos(id) {
     if (ride.ids.has(id) && ride.fix) return { lat: ride.fix.lat, lng: ride.fix.lng, lts: ride.fix.t, mine: true };
     const m = meta[id];
     return m && m.loc && statusOf(id) === 'out' ? { ...m.loc } : null;
   }
-  function drawMap() {
-    const o = orders.get(mapId);
-    if (!o || $('#mapView').hidden) return;
-    const s = statusOf(o.id);
-    const p = riderPos(o.id);
-    if (mapCtl) {
-      if (p) mapCtl.setRider(p.lat, p.lng); else mapCtl.clearRider();
-      if (!mapUserMoved) mapCtl.fit();
+
+  /* ---------- Deliveries tab: every home delivery on one OpenStreetMap ---------- */
+  const dv = { id: null, ctl: null, loading: null, dots: new Map(), moved: false };
+  const dvOrders = () => [...orders.values()].filter((o) => o.svc === 'deliver');
+  const dvOpen = (o) => !['completed', 'rejected'].includes(statusOf(o.id));
+
+  function dvPick() {
+    const cur = orders.get(dv.id);
+    if (cur && cur.svc === 'deliver') return;
+    const first = dvOrders().filter(dvOpen).sort((a, b) => a.ts - b.ts)[0];
+    dv.id = first ? first.id : null; dv.moved = false;
+  }
+  function dvSelect(id) { dv.id = id; dv.moved = false; renderDeliveries(); }
+
+  function dvListHTML() {
+    const today = startOfToday();
+    const act = dvOrders().filter(dvOpen).sort((a, b) => a.ts - b.ts);
+    const done = dvOrders().filter((o) => !dvOpen(o) && o.ts >= today).sort((a, b) => b.ts - a.ts).slice(0, 15);
+    const row = (o) => {
+      const s = statusOf(o.id);
+      return `<button type="button" class="dv-row ${o.id === dv.id ? 'on' : ''}" data-dv="${esc(o.id)}" style="--c:${STATUS[s].color}"><span class="dv-top"><b>${esc(o.id)}</b><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span></span><span>${esc(o.n)} · ${fmt(o.total)}</span><small class="muted">${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km · ${o.fee ? `${fmt(o.fee)} fee` : 'free'} · ${ago(o.ts)}</small><small class="muted">📍 ${esc(o.addr)}</small></button>`;
+    };
+    return `<h3>In progress <em>${act.length}</em></h3>${act.length ? act.map(row).join('') : '<p class="muted">No deliveries in progress.</p>'}${done.length ? `<h3>Finished today <em>${done.length}</em></h3>${done.map(row).join('')}` : ''}`;
+  }
+
+  function dvInfoHTML(o) {
+    if (!o) return '<p class="muted">Delivery orders appear here with the customer\'s location on the map.</p>';
+    const s = statusOf(o.id), m = meta[o.id] || {}, p = riderPos(o.id);
+    const km = LH.fromShopKm(o.lat, o.lng);
+    const rk = p ? LH.distKm(p, o) : 0;
+    const rider = p ? `🛵 ${p.mine ? 'Your location' : 'Rider'} updated ${ago(p.lts)} · ${rk.toFixed(1)} km from the customer · about ${LH.etaMin(rk)} min`
+      : s === 'out' ? 'No rider location shared yet. Tap Share location on the rider\'s phone.' : s === 'completed' ? 'Delivered.' : s === 'rejected' ? 'Rejected.' : 'The rider\'s location appears once the order is out for delivery.';
+    const pay = o.pay === 'upi' ? (m.v ? 'UPI paid' : 'UPI unverified') : 'Cash on delivery';
+    const acts = actionsFor(o, s).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('');
+    return `<div class="dv-head"><h3>${esc(o.id)} · ${esc(o.n)}</h3><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span></div>
+      <div class="dv-facts">
+        <div><span class="muted">Phone</span><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>
+        <div><span class="muted">Customer location</span>${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 OpenStreetMap</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a></div></div>
+        <div><span class="muted">Distance and fee</span>${km.toFixed(1)} km from the cafe · ${o.fee ? fmt(o.fee) : 'free delivery'}</div>
+        <div><span class="muted">Order</span>${o.it.map(([id, q]) => `${q}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br>📝 ${esc(o.nt)}` : ''}</div>
+        <div><span class="muted">Total and payment</span><b>${fmt(o.total)}</b> · ${pay}</div>
+      </div>
+      <div class="dv-rider">${rider}</div>
+      <div class="acts">${acts}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div>`;
+  }
+
+  function dvEnsureMap() {
+    if (!dv.loading) {
+      dv.loading = window.LHMap.create($('#dvMap'), { pan: true }).then((c) => { dv.ctl = c; c.map.on('dragstart', () => { dv.moved = true; }); return c; })
+        .catch((e) => { dv.loading = null; $('#dvMap').innerHTML = '<p class="muted" style="padding:24px;text-align:center">The map could not load. Use the Navigate links instead.</p>'; throw e; });
     }
-    const km = p ? LH.distKm(p, o) : null;
-    $('#mvSub').textContent = `${LH.statusLabel(o, s)}${p ? ` · ${km.toFixed(1)} km from customer · about ${LH.etaMin(km)} min` : ''}`;
-    $('#mvInfo').innerHTML = `<div>${p ? `🛵 ${p.mine ? 'Your location' : 'Rider'} updated ${ago(p.lts)}` : s === 'out' ? 'No rider location shared yet. Tap Share location on the rider\'s phone.' : 'Rider location appears once the order is out for delivery.'}</div><div class="muted">📍 ${esc(o.addr)}</div>`;
+    return dv.loading;
   }
-  async function openMap(id) {
-    const o = orders.get(id);
-    if (!o || o.svc !== 'deliver') return;
-    mapId = id; mapUserMoved = false; mapFocus = document.activeElement;
-    $('#mapView').hidden = false;
-    $('#mvTitle').textContent = `${o.id} · ${o.n}`;
-    $('#mvNav').href = window.LHMap.navUrl(o.lat, o.lng);
-    drawMap();
-    $('#mvClose').focus();
-    const token = ++mapToken;
-    try {
-      const ctl = await window.LHMap.create($('#mvMap'), { pan: true });
-      if (token !== mapToken) { ctl.destroy(); return; }
-      mapCtl = ctl;
-      ctl.map.on('dragstart', () => { mapUserMoved = true; });
-      ctl.setDest(o.lat, o.lng);
-      drawMap();
-      ctl.fit();
-    } catch (e) { $('#mvMap').innerHTML = '<p class="muted" style="padding:24px;text-align:center">The map could not load. Use the Navigate link instead.</p>'; }
+
+  async function dvDrawMap() {
+    if (!$('#tab-deliveries').classList.contains('on')) return;
+    let c;
+    try { c = await dvEnsureMap(); } catch (e) { return; }
+    c.invalidate();
+    const L = window.L;
+    const open = dvOrders().filter(dvOpen);
+    const keep = new Set(open.map((o) => o.id));
+    dv.dots.forEach((mk, id) => { if (!keep.has(id)) { mk.remove(); dv.dots.delete(id); } });
+    open.forEach((o) => {
+      let mk = dv.dots.get(o.id);
+      if (!mk) {
+        mk = L.circleMarker([o.lat, o.lng], { radius: 9, weight: 3, color: '#fff', fillOpacity: 0.95 }).addTo(c.map);
+        mk.bindTooltip(`${o.id} · ${o.n}`);
+        mk.on('click', () => dvSelect(o.id));
+        dv.dots.set(o.id, mk);
+      }
+      mk.setStyle({ fillColor: STATUS[statusOf(o.id)].color });
+    });
+    const o = orders.get(dv.id);
+    if (o) {
+      c.setDest(o.lat, o.lng);
+      const p = riderPos(o.id);
+      if (p) c.setRider(p.lat, p.lng); else c.clearRider();
+    } else { c.clearDest(); c.clearRider(); }
+    if (!dv.moved) c.fit();
   }
-  function closeMap() {
-    if ($('#mapView').hidden) return;
-    mapToken++; mapId = null;
-    if (mapCtl) { try { mapCtl.destroy(); } catch (e) { /* already gone */ } mapCtl = null; }
-    $('#mvMap').innerHTML = '';
-    $('#mapView').hidden = true;
-    if (mapFocus && mapFocus.focus) mapFocus.focus();
+
+  function renderDeliveries() {
+    dvPick();
+    $('#dvList').innerHTML = dvListHTML();
+    $('#dvInfo').innerHTML = dvInfoHTML(orders.get(dv.id));
+    dvDrawMap();
+  }
+
+  function dvFitAll() {
+    if (!dv.ctl) return;
+    const pts = [[LH.SHOP.lat, LH.SHOP.lng], ...dvOrders().filter(dvOpen).map((o) => [o.lat, o.lng])];
+    dv.moved = true;
+    dv.ctl.map.fitBounds(window.L.latLngBounds(pts), { padding: [40, 40], maxZoom: 16 });
   }
 
   /* ---------- Board ---------- */
@@ -446,7 +497,7 @@
     const late = s === 'pending' && Date.now() - o.ts > 5 * 60000;
     const del = o.svc === 'deliver';
     const svcChip = o.svc === 'take' ? 'Takeaway' : del ? `🛵 Delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km · ${o.fee ? `${fmt(o.fee)} fee` : 'free'}` : `Dine-in${o.tbl ? ` · T${esc(o.tbl)}` : ''}`;
-    const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">📡 Live map</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
+    const where = del ? `<div class="oc-addr">📍 ${esc(o.addr)}<div class="oc-links"><a href="${window.LHMap.osmUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🗺 Map</a><a href="${window.LHMap.navUrl(o.lat, o.lng)}" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button type="button" data-act="map">� Track</button></div>${s === 'out' ? `<small class="muted">${m.loc ? `Rider location updated ${ago(m.loc.lts)}` : 'No rider location shared yet'}</small>` : ''}</div>` : '';
     return `<article class="ocard ${fresh.has(o.id) ? 'fresh' : ''}" draggable="${LH.nextFor(o, s).length ? 'true' : 'false'}" data-id="${esc(o.id)}" style="--c:${STATUS[s].color}">
       <div class="oc-top"><span class="oid">${esc(o.id)}</span><span class="age ${late ? 'late' : ''}">${ago(o.ts)}</span></div>
       <div class="oc-cust"><b>${esc(o.n)}</b><a href="tel:${esc(o.p)}">${esc(o.p)}</a></div>
@@ -460,11 +511,14 @@
     </article>`;
   }
 
+  const svcMatch = (f, o) => f === 'all' || (f === 'deliver' ? o.svc === 'deliver' : o.svc !== 'deliver');
+  let boardSvc = 'all';
   function renderBoard() {
     const today = startOfToday();
-    const all = [...orders.values()].sort((a, b) => a.ts - b.ts);
+    const every = [...orders.values()].sort((a, b) => a.ts - b.ts);
+    const all = every.filter((o) => svcMatch(boardSvc, o));
     // The "On the way" column only appears once delivery is on or has been used.
-    const cols = COLS.filter((s) => s !== 'out' || (draft && draft.del) || all.some((o) => o.svc === 'deliver'));
+    const cols = COLS.filter((s) => s !== 'out' || (draft && draft.del) || every.some((o) => o.svc === 'deliver'));
     $('#board').innerHTML = cols.map((s) => {
       let list = all.filter((o) => statusOf(o.id) === s);
       if (s === 'completed') list = list.filter((o) => o.ts >= today).reverse().slice(0, 25);
@@ -473,17 +527,17 @@
     }).join('');
   }
 
-  $('#board').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-act]');
-    if (!btn) return;
-    const id = btn.closest('.ocard').dataset.id;
-    const act = btn.dataset.act;
+  function doAct(act, id) {
     if (act === 'reject') askReject(id);
     else if (act === 'print') printTicket(orders.get(id));
     else if (act === 'pay') togglePay(id);
-    else if (act === 'map') openMap(id);
+    else if (act === 'map') { dv.id = id; dv.moved = false; showTab('deliveries'); }
     else if (act === 'ride') { if (ride.ids.has(id)) stopRide(id); else startRide(id); }
     else setStatus(id, act);
+  }
+  $('#board').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (btn) doAct(btn.dataset.act, btn.closest('.ocard').dataset.id);
   });
   $('#board').addEventListener('dragstart', (e) => {
     const c = e.target.closest('.ocard');
@@ -514,15 +568,19 @@
     const all = [...orders.values()];
     const t = all.filter((o) => o.ts >= today && statusOf(o.id) !== 'rejected');
     const count = (s) => all.filter((o) => statusOf(o.id) === s).length;
+    const dToday = t.filter((o) => o.svc === 'deliver');
+    const dOpen = all.filter((o) => o.svc === 'deliver' && dvOpen(o)).length;
     $('#kpis').innerHTML = [
       kpi('New', count('pending'), 'awaiting action', '#fbbf24'),
       kpi('In kitchen', count('accepted') + count('cooking'), 'accepted + cooking', '#fb923c'),
       kpi('Ready', count('ready'), 'waiting for pickup', '#34d399'),
       kpi('Orders today', t.length, 'excluding rejected', '#60a5fa'),
+      kpi('Deliveries today', dToday.length, `${dOpen} in progress · ${fmt(dToday.reduce((s, o) => s + (o.fee || 0), 0))} fees`, '#8b5cf6'),
       kpi('Sales today', fmt(money(t)), `avg ${fmt(t.length ? Math.round(money(t) / t.length) : 0)}`, '#a78bfa')
     ].join('');
     const n = count('pending');
     const nc = $('#navCount'); nc.hidden = !n; nc.textContent = n;
+    const nd = $('#navDel'); nd.hidden = !dOpen; nd.textContent = dOpen;
   }
 
   function rank(rows, fmtVal) {
@@ -530,8 +588,33 @@
     return rows.length ? `<div class="rank">${rows.map(([l, v]) => `<div class="rank-row"><span>${esc(l)}</span><b>${fmtVal(v)}</b><div class="meter"><i style="width:${(v / max * 100).toFixed(1)}%"></i></div></div>`).join('')}</div>` : '<p class="muted">No data yet.</p>';
   }
 
+  let anSvc = 'all';
+  const barChart = (hours) => { const hm = Math.max(1, ...hours); return hours.map((n, h) => `<div class="bar-col"><div style="height:${(n / hm * 100).toFixed(1)}%">${n ? `<em>${n}</em>` : ''}</div><span>${h % 3 === 0 ? `${h}h` : ''}</span></div>`).join(''); };
+
+  function renderDeliveryAnalytics() {
+    const everyone = [...orders.values()];
+    const D = LH.deliveryStats(everyone.map((o) => ({ o, s: statusOf(o.id) })));
+    const valid = everyone.filter((o) => statusOf(o.id) !== 'rejected');
+    const total = money(valid);
+    $('#dKpis').innerHTML = [
+      kpi('Delivery orders', D.n, `${D.completed} delivered${D.rejected ? ` · ${D.rejected} rejected` : ''}`, '#8b5cf6'),
+      kpi('Delivery revenue', fmt(D.sales), total ? `${Math.round(D.sales / total * 100)}% of all sales` : '–', '#34d399'),
+      kpi('Delivery fees', fmt(D.fees), `items ${fmt(D.food)}`, '#fb923c'),
+      kpi('Avg ticket', fmt(D.avg), `${D.avgKm.toFixed(1)} km on average`, '#a78bfa'),
+      kpi('In progress', D.active.length, `${D.upi} UPI · ${D.cod} cash on delivery`, '#60a5fa')
+    ].join('');
+    const B = D.bands;
+    const names = [`Free, up to ${LH.FREE_KM} km`, `${LH.FREE_KM} to ${LH.MID_KM} km (${fmt(LH.RATE_MID)}/km)`, `${LH.MID_KM} to ${LH.DELIVERY_KM} km (${fmt(LH.RATE_FAR)}/km)`];
+    $('#dBands').innerHTML = rank([[names[0], B.free.n], [names[1], B.mid.n], [names[2], B.far.n]], (v) => `${v} order${v === 1 ? '' : 's'}`);
+    $('#dFees').innerHTML = rank([[names[0], B.free.fees], [names[1], B.mid.fees], [names[2], B.far.fees]], fmt);
+    $('#dSplit').innerHTML = rank([['Delivery: items', D.food], ['Delivery: fees', D.fees], ['Dine-in & takeaway', total - D.sales]], fmt);
+    const hours = Array(24).fill(0);
+    valid.filter((o) => o.svc === 'deliver').forEach((o) => { hours[new Date(o.ts).getHours()]++; });
+    $('#dHours').innerHTML = barChart(hours);
+  }
+
   function renderAnalytics() {
-    const all = [...orders.values()];
+    const all = [...orders.values()].filter((o) => svcMatch(anSvc, o));
     const valid = all.filter((o) => statusOf(o.id) !== 'rejected');
     const revenue = money(valid);
     const phones = {}; valid.forEach((o) => { const k = o.p.replace(/\D/g, '').slice(-10); phones[k] = (phones[k] || 0) + 1; });
@@ -540,7 +623,7 @@
     const done = all.filter((o) => statusOf(o.id) === 'completed').length;
     $('#aKpis').innerHTML = [
       kpi('Orders', all.length, 'stored on this device', '#60a5fa'),
-      kpi('Revenue', fmt(revenue), 'excluding rejected', '#34d399'),
+      kpi('Revenue', fmt(revenue), anSvc === 'instore' ? 'dine-in and takeaway' : `excluding rejected${valid.some((o) => o.fee) ? `, incl. ${fmt(valid.reduce((s, o) => s + (o.fee || 0), 0))} delivery fees` : ''}`, '#34d399'),
       kpi('Avg ticket', fmt(valid.length ? Math.round(revenue / valid.length) : 0), 'per order', '#a78bfa'),
       kpi('Completion', all.length ? `${Math.round(done / all.length * 100)}%` : '–', `${done} completed`, '#fb923c'),
       kpi('Customers', customers, `${repeat} repeat`, '#f472b6')
@@ -548,8 +631,7 @@
 
     const hours = Array(24).fill(0);
     valid.forEach((o) => { hours[new Date(o.ts).getHours()]++; });
-    const hm = Math.max(1, ...hours);
-    $('#hourChart').innerHTML = hours.map((n, h) => `<div class="bar-col"><div style="height:${(n / hm * 100).toFixed(1)}%">${n ? `<em>${n}</em>` : ''}</div><span>${h % 3 === 0 ? `${h}h` : ''}</span></div>`).join('');
+    $('#hourChart').innerHTML = barChart(hours);
 
     const qty = {}; const cat = {};
     valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + it.price * q; }));
@@ -560,20 +642,22 @@
     const sv = { 'Dine-in': 0, Takeaway: 0, Delivery: 0, 'UPI': 0, 'Cash / counter': 0 };
     all.forEach((o) => { sv[o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? 'Delivery' : 'Dine-in']++; sv[o.pay === 'upi' ? 'UPI' : 'Cash / counter']++; });
     $('#svcMix').innerHTML = rank(Object.entries(sv), (v) => v);
+    renderDeliveryAnalytics();
   }
 
   /* ---------- History ---------- */
   function renderHistory() {
     const q = $('#histSearch').value.trim().toLowerCase();
     const st = $('#histStatus').value;
+    const sv = $('#histSvc').value;
     const rows = [...orders.values()].sort((a, b) => b.ts - a.ts)
-      .filter((o) => (!st || statusOf(o.id) === st) && (!q || `${o.id} ${o.n} ${o.p} ${o.em} ${o.addr || ''}`.toLowerCase().includes(q))).slice(0, 300);
+      .filter((o) => (!st || statusOf(o.id) === st) && (!sv || o.svc === sv) && (!q || `${o.id} ${o.n} ${o.p} ${o.em} ${o.addr || ''}`.toLowerCase().includes(q))).slice(0, 300);
     $('#histBody').innerHTML = rows.length ? rows.map((o) => {
       const s = statusOf(o.id); const m = meta[o.id] || {};
       return `<tr><td class="oid">${esc(o.id)}</td><td>${new Date(o.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
         <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span>${o.svc === 'deliver' ? `<br><span class="muted">🛵 ${esc(o.addr)}</span>` : ''}</td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
-        <td><b>${fmt(o.total)}</b></td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
+        <td><b>${fmt(o.total)}</b>${o.svc === 'deliver' ? `<br><span class="muted">incl. ${o.fee ? fmt(o.fee) : 'free'} delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km</span>` : ''}</td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
         <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span>${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
     }).join('') : '<tr><td colspan="7" class="muted" style="padding:30px;text-align:center">No orders found.</td></tr>';
   }
@@ -626,10 +710,10 @@
     $('#connInfo').innerHTML = row('Orders channel', i.orders ? '🟢 connected' : '🟠 reconnecting') + row('Status channel', i.ops ? '🟢 connected' : '🟠 reconnecting') + row('Queued messages', i.queued || 0) + row('Orders stored', orders.size);
   }
 
-  function renderAll() { renderKpis(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); }
+  function renderAll() { renderKpis(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); if ($('#tab-deliveries').classList.contains('on')) renderDeliveries(); }
 
   /* ---------- UI wiring ---------- */
-  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], settings: ['Settings', 'Alerts, connection and data'] };
+  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], settings: ['Settings', 'Alerts, connection and data'] };
   function showTab(name) {
     if (!TABS[name]) name = 'orders';
     $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
@@ -637,6 +721,7 @@
     $('#tabTitle').textContent = TABS[name][0]; $('#tabSub').textContent = TABS[name][1];
     if (name === 'analytics') renderAnalytics();
     if (name === 'history') renderHistory();
+    if (name === 'deliveries') renderDeliveries();
     history.replaceState(null, '', `#${name}`);
     if (started) scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -647,15 +732,20 @@
     $('#histStatus').insertAdjacentHTML('beforeend', Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join(''));
     $('#histSearch').addEventListener('input', renderHistory);
     $('#histStatus').addEventListener('change', renderHistory);
+    $('#histSvc').addEventListener('change', renderHistory);
+    const seg = (sel, set) => $(sel).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; $$('button', $(sel)).forEach((x) => x.classList.toggle('on', x === b)); set(b.dataset.v); });
+    seg('#boardSvc', (v) => { boardSvc = v; renderBoard(); });
+    seg('#anSvc', (v) => { anSvc = v; renderAnalytics(); });
+    $('#dvList').addEventListener('click', (e) => { const b = e.target.closest('[data-dv]'); if (b) dvSelect(b.dataset.dv); });
+    $('#dvInfo').addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b && dv.id) doAct(b.dataset.act, dv.id); });
+    $('#dvFit').addEventListener('click', () => { dv.moved = false; dvDrawMap(); });
+    $('#dvAll').addEventListener('click', dvFitAll);
     $('#menuSearch').addEventListener('input', filterMenuAdmin);
     $('#exportCsv').addEventListener('click', exportCsv);
     $('#exportCsv2').addEventListener('click', exportCsv);
 
     $('#openToggle').addEventListener('change', (e) => { draft.open = e.target.checked; renderConfig(); pushConfig(); });
     $('#delToggle').addEventListener('change', (e) => { draft.del = e.target.checked; renderConfig(); renderBoard(); pushConfig(); });
-    $('#mvClose').addEventListener('click', closeMap);
-    $('#mvFit').addEventListener('click', () => { mapUserMoved = false; if (mapCtl) mapCtl.fit(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMap(); });
     $('#rideBar').addEventListener('click', (e) => { if (e.target.closest('[data-ride-stop]')) { ride.ids.clear(); saveRide(); ensureWatch(); renderRide(); renderBoard(); } });
     $('#prepDec').addEventListener('click', () => { draft.prep = Math.max(1, draft.prep - 1); renderConfig(); pushConfig(); });
     $('#prepInc').addEventListener('click', () => { draft.prep = Math.min(180, draft.prep + 1); renderConfig(); pushConfig(); });

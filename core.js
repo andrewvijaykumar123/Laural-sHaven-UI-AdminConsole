@@ -112,6 +112,23 @@
   };
   // Rough ride time: roads are about 1.35x the straight line, at about 22 km/h through traffic.
   const etaMin = (km) => Math.max(1, Math.round((km * 1.35 / 22) * 60));
+  // Home-delivery figures from [{ o, s }] rows (s = status). Rejected orders are not sales.
+  const deliveryStats = (rows) => {
+    const all = rows.filter((x) => x.o.svc === 'deliver');
+    const ok = all.filter((x) => x.s !== 'rejected');
+    const sum = (a, f) => a.reduce((t, x) => t + f(x.o), 0);
+    const km = (x) => Math.round(fromShopKm(x.o.lat, x.o.lng) * 10) / 10;
+    const band = (lo, hi) => { const b = ok.filter((x) => km(x) > lo && km(x) <= hi); return { n: b.length, fees: sum(b, (o) => o.fee || 0), sales: sum(b, (o) => o.total) }; };
+    const sales = sum(ok, (o) => o.total), fees = sum(ok, (o) => o.fee || 0);
+    return {
+      placed: all.length, n: ok.length, rejected: all.length - ok.length,
+      completed: ok.filter((x) => x.s === 'completed').length, active: ok.filter((x) => x.s !== 'completed'),
+      sales, fees, food: sales - fees, avg: ok.length ? Math.round(sales / ok.length) : 0,
+      avgKm: ok.length ? ok.reduce((t, x) => t + km(x), 0) / ok.length : 0,
+      bands: { free: band(-1, FREE_KM), mid: band(FREE_KM, MID_KM), far: band(MID_KM, Infinity) },
+      upi: ok.filter((x) => x.o.pay === 'upi').length, cod: ok.filter((x) => x.o.pay !== 'upi').length
+    };
+  };
   const r5 = (n) => Math.round(n * 1e5) / 1e5;
 
   /* ---------- Helpers ---------- */
@@ -425,7 +442,7 @@
 
   window.LH = {
     UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
-    SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, distKm, fromShopKm, inRange, validPoint, etaMin,
+    SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, priceLines, validateOrder,
     store, now, on, emit, init, connect, watch, flush,
     publishOrder, publishAdmin, admin: adminAuth,

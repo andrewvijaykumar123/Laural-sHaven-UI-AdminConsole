@@ -198,6 +198,7 @@ function buildReport(LH, rows) {
   r.reasons = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
   const phones = {}; valid.forEach(({ o }) => { const k = o.p.replace(/\D/g, '').slice(-10); phones[k] = (phones[k] || 0) + 1; });
   r.customers = Object.keys(phones).length; r.repeat = Object.values(phones).filter((n) => n > 1).length;
+  r.del = LH.deliveryStats(rows);
   return r;
 }
 
@@ -225,6 +226,7 @@ function reportEmail(LH, day, rows, prev) {
 ${h('Payments')}${table([['UPI verified', `${r.upiPaidN} orders`, f(r.upiPaid)], ['UPI not yet verified', `${r.upiUnverified.length} orders`, f(r.upiUnverified.reduce((t, x) => t + x.o.total, 0))], ['Pay at counter', `${r.counterN} orders`, f(r.counterAmt)]], ['l', 'r', 'r'])}
 ${r.upiUnverified.length ? `${h('UPI payments to verify')}${table(r.upiUnverified.map((x) => [x.o.id, x.o.n, x.o.p, f(x.o.total)]), ['l', 'l', 'l', 'r'])}` : ''}
 ${h('Service')}${table([['Dine-in', `${r.dine} orders`], ['Takeaway', `${r.take} orders`], ['Delivery', `${r.deliver} orders`]], ['l', 'r'])}
+${h('Home delivery')}${r.del.placed ? table([['Orders', `${r.del.n} orders`, f(r.del.sales)], ['Food sales', '', f(r.del.food)], ['Delivery fees', '', f(r.del.fees)], ['Average ticket', '', f(r.del.avg)], ['Average distance', '', `${r.del.avgKm.toFixed(1)} km`], [`Free zone, up to ${LH.FREE_KM} km`, `${r.del.bands.free.n} orders`, f(r.del.bands.free.sales)], [`${LH.FREE_KM} to ${LH.MID_KM} km`, `${r.del.bands.mid.n} orders`, f(r.del.bands.mid.fees)], [`${LH.MID_KM} to ${LH.DELIVERY_KM} km`, `${r.del.bands.far.n} orders`, f(r.del.bands.far.fees)], ['Delivered', `${r.del.completed} of ${r.del.n}`, ''], ['UPI / cash on delivery', `${r.del.upi} / ${r.del.cod}`, ''], ['Rejected', `${r.del.rejected}`, '']], ['l', 'r', 'r']) + `<p style="margin:6px 0 0;font-size:11px;color:#6b7280">Fee rows show delivery fees collected; the free zone row shows order value.</p>` : '<p style="margin:0;font-size:13px;color:#6b7280">No home deliveries</p>'}
 ${h('Top sellers')}${table(r.top.map(([n, q, v]) => [n, `${q}x`, f(v)]), ['l', 'r', 'r'])}
 ${h('Revenue by category')}${table(r.cats.map(([n, v]) => [n, f(v)]), ['l', 'r'])}
 ${h('Orders by hour (IST)')}${hourRows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${hourRows}</table>${r.peak >= 0 ? `<p style="margin:6px 0 0;font-size:12px;color:#6b7280">Busiest hour: ${pad(r.peak)}:00</p>` : ''}` : '<p style="margin:0;font-size:13px;color:#6b7280">No orders</p>'}
@@ -234,7 +236,7 @@ ${r.open.length ? `${h('Not finished at close')}${table(r.open.map((x) => [x.o.i
 <p style="margin:20px 0 0;font-size:12px;color:#6b7280">The full list of orders is attached as a CSV file.</p>`;
 
   const subject = `Daily report ${day} - ${f(r.sales)} from ${r.validCount} orders`;
-  const text = `${SHOP} daily report, ${prettyDay(day)}\nSales ${f(r.sales)} from ${r.validCount} orders${delta}\nAverage ticket ${f(r.avg)}\nCompleted ${r.completed} of ${r.placed}, rejected ${r.rejected}\nUPI verified ${f(r.upiPaid)}, UPI to verify ${r.upiUnverified.length}, counter ${f(r.counterAmt)}\nTop: ${r.top.slice(0, 3).map(([n, q]) => `${n} x${q}`).join(', ') || 'none'}\nFull list attached.`;
+  const text = `${SHOP} daily report, ${prettyDay(day)}\nSales ${f(r.sales)} from ${r.validCount} orders${delta}\nAverage ticket ${f(r.avg)}\nCompleted ${r.completed} of ${r.placed}, rejected ${r.rejected}\nUPI verified ${f(r.upiPaid)}, UPI to verify ${r.upiUnverified.length}, counter ${f(r.counterAmt)}\nHome delivery ${r.del.n} orders, ${f(r.del.sales)} (fees ${f(r.del.fees)})\nTop: ${r.top.slice(0, 3).map(([n, q]) => `${n} x${q}`).join(', ') || 'none'}\nFull list attached.`;
   return { subject, html: shell(LH, `Daily report - ${prettyDay(day)}`, inner), text, attachments: [{ filename: `lauralshaven-${day}.csv`, content: `\ufeff${reportCsv(LH, rows)}`, contentType: 'text/csv; charset=utf-8' }], stats: r };
 }
 

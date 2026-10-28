@@ -133,6 +133,15 @@ const send = async (m) => { outbox.push(m); };
   const dRep = lib.buildReport(LH, dRows);
   assert.strictEqual(dRep.deliver, 1); assert.strictEqual(dRep.take, 0); assert.strictEqual(dRep.dine, 0);
   assert.ok(lib.reportEmail(LH, day, dRows, null).attachments[0].content.includes('12 Test Street'));
+  // deliveries are reported separately: fees, distance bands, rejected ones excluded from sales
+  const mixed = [...dRows, { o: o7, s: 'completed', v: false, r: '' }, { o: lib.toOrder(LH, 'LH-DELIV9', at(12), T0), s: 'rejected', v: false, r: 'x' }];
+  const ds = LH.deliveryStats(mixed);
+  assert.strictEqual(ds.n, 2); assert.strictEqual(ds.rejected, 1); assert.strictEqual(ds.fees, o7.fee);
+  assert.strictEqual(ds.bands.free.n, 1); assert.strictEqual(ds.bands.mid.n, 1); assert.strictEqual(ds.bands.far.n, 0);
+  assert.strictEqual(ds.sales, dRows[0].o.total + o7.total);
+  const dm = lib.reportEmail(LH, day, mixed, null);
+  assert.match(dm.html, /Home delivery/); assert.match(dm.text, /Home delivery 2 orders/);
+  assert.match(lib.reportEmail(LH, day, [], null).html, /No home deliveries/);
 
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });

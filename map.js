@@ -84,6 +84,7 @@
         drawLine();
       },
       clearRider() { if (rider) { rider.remove(); rider = null; drawLine(); } },
+      clearDest() { if (dest) { dest.remove(); dest = null; drawLine(); } },
       fit() {
         const pts = [ll(SHOP.lat, SHOP.lng)];
         [me, rider, dest].forEach((m) => { if (m) { const p = m.getLatLng(); pts.push([p.lat, p.lng]); } });

@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261029b">
+  <link rel="stylesheet" href="styles.css?v=20261029c">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -34,6 +34,7 @@
       <div class="logo"><span>🍃</span><b>Haven</b><small>Admin</small></div>
       <nav id="nav">
         <button data-tab="orders" class="on"><i>📋</i><span>Live orders</span><em id="navCount" hidden>0</em></button>
+        <button data-tab="deliveries" id="navDelBtn"><i>🛵</i><span>Deliveries</span><em id="navDel" hidden>0</em></button>
         <button data-tab="analytics"><i>📊</i><span>Analytics</span></button>
         <button data-tab="menu"><i>🍽️</i><span>Menu &amp; stock</span></button>
         <button data-tab="history"><i>🗂️</i><span>Order history</span></button>
@@ -53,13 +54,26 @@
         </div>
       </header>
 
+      <div class="ride-bar" id="rideBar" hidden role="status"></div>
       <section class="tab on" id="tab-orders">
-        <div class="ride-bar" id="rideBar" hidden role="status"></div>
         <div class="kpis" id="kpis"></div>
+        <div class="seg" id="boardSvc" role="group" aria-label="Filter orders"><button type="button" data-v="all" class="on">All orders</button><button type="button" data-v="deliver">🛵 Home delivery</button><button type="button" data-v="instore">Dine-in &amp; takeaway</button></div>
         <div class="board" id="board"></div>
       </section>
 
+      <section class="tab" id="tab-deliveries">
+        <div class="dv-grid">
+          <div class="dv-list" id="dvList" aria-label="Deliveries"></div>
+          <div class="dv-main">
+            <div class="dv-tools"><button class="btn ghost sm" id="dvFit" type="button">Show selected</button><button class="btn ghost sm" id="dvAll" type="button">Show all deliveries</button><span class="muted" id="dvLegend">🍃 cafe · 🏠 customer · 🛵 rider</span></div>
+            <div class="dv-map"><div class="lh-map tall" id="dvMap"></div></div>
+            <div class="panel dv-info" id="dvInfo" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
       <section class="tab" id="tab-analytics">
+        <div class="seg" id="anSvc" role="group" aria-label="Analytics scope"><button type="button" data-v="all" class="on">All orders</button><button type="button" data-v="deliver">🛵 Home delivery</button><button type="button" data-v="instore">Dine-in &amp; takeaway</button></div>
         <div class="kpis" id="aKpis"></div>
         <div class="panels">
           <div class="panel wide"><h3>Orders by hour</h3><div class="bars" id="hourChart"></div></div>
@@ -67,6 +81,14 @@
           <div class="panel"><h3>Revenue by category</h3><div id="catSplit"></div></div>
           <div class="panel"><h3>Status mix</h3><div id="statusMix"></div></div>
           <div class="panel"><h3>Service &amp; payment</h3><div id="svcMix"></div></div>
+        </div>
+        <h3 class="sec-title">🛵 Home delivery <small>always shown separately</small></h3>
+        <div class="kpis" id="dKpis"></div>
+        <div class="panels">
+          <div class="panel"><h3>Orders by distance</h3><div id="dBands"></div></div>
+          <div class="panel"><h3>Delivery fees by distance</h3><div id="dFees"></div></div>
+          <div class="panel"><h3>Revenue: delivery vs in-store</h3><div id="dSplit"></div></div>
+          <div class="panel"><h3>Delivery orders by hour</h3><div class="bars" id="dHours"></div></div>
         </div>
       </section>
 
@@ -86,6 +108,7 @@
 
       <section class="tab" id="tab-history">
         <div class="toolbar"><label class="search"><span>🔍</span><input id="histSearch" placeholder="Search by order ID, name or phone..." type="search"></label>
+          <select id="histSvc" aria-label="Filter by service"><option value="">All services</option><option value="deliver">Home delivery</option><option value="dine">Dine-in</option><option value="take">Takeaway</option></select>
           <select id="histStatus" aria-label="Filter by status"><option value="">All statuses</option></select>
           <button class="btn ghost sm" id="exportCsv">⬇ Export CSV</button></div>
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Order</th><th>Time</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead><tbody id="histBody"></tbody></table></div>
@@ -114,18 +137,13 @@
   </div>
 
   <div id="printArea"></div>
-  <div class="mapview" id="mapView" hidden role="dialog" aria-modal="true" aria-labelledby="mvTitle">
-    <header><button class="icon-btn" id="mvClose" aria-label="Close map">✕</button><div><h3 id="mvTitle">Delivery</h3><p id="mvSub" class="muted"></p></div></header>
-    <div class="mv-map"><div class="lh-map tall" id="mvMap"></div></div>
-    <footer><div id="mvInfo" aria-live="polite"></div><div class="acts"><a class="btn primary sm" id="mvNav" href="#" target="_blank" rel="noopener noreferrer">🧭 Navigate</a><button class="btn ghost sm" id="mvFit">Show everything</button></div></footer>
-  </div>
   <div class="modal" id="modal" hidden role="dialog" aria-modal="true"><div class="modal-card" id="modalCard"></div></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
-  <script src="core.js?v=20261029b"></script>
-  <script src="map.js?v=20261029b"></script>
-  <script src="app.js?v=20261029b"></script>
+  <script src="core.js?v=20261029c"></script>
+  <script src="map.js?v=20261029c"></script>
+  <script src="app.js?v=20261029c"></script>
 </body>
 </html>
