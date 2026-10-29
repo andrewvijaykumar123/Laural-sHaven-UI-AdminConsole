@@ -13,6 +13,9 @@ function loadPlaywright() {
 }
 
 const ADMIN_UID = '4FSqW048fSdUFMQZJ1OJVp7GLob2';
+const ADMIN2_UID = 'Sa0bXzyAK6fGrOioIg7x9qizB792';
+const ADMIN2_EMAIL = 'lauralshavenadmin@laurals-haven.invalid';
+const ADMIN2_PASSWORD = 'second-admin-test';
 const ADMIN_EMAIL = 'admin@laurals.test';
 const ADMIN_PASSWORD = 'correct-horse-battery';
 const RELAY_HOST = 'lauralshaven.andrewvijaykumar123.workers.dev';
@@ -70,7 +73,7 @@ class Db {
     if (this.noMailRules && (col === 'mail' || col === 'mailq')) return false; // simulates firestore.rules not yet republished
     if (this.noFeedbackRules && col === 'feedback') return false;
     if (this.noEventRules && col === 'events' && op === 'create') return false;
-    const admin = uid === ADMIN_UID;
+    const admin = uid === ADMIN_UID || uid === ADMIN2_UID;
     const signedIn = !!uid;
     if (col === 'events') {
       if (op === 'create') return signedIn && this.eventsOn() && /^EV-[A-Z0-9]{6,10}$/.test(id) && this.validEvent(data, id, uid);
@@ -156,6 +159,7 @@ class Db {
       if (op === 'signin') {
         if (a.anon) return { uid: `anon-${++this.anon}` };
         if (a.email === ADMIN_EMAIL && a.password === ADMIN_PASSWORD) return { uid: ADMIN_UID };
+        if (a.email === ADMIN2_EMAIL && a.password === ADMIN2_PASSWORD) return { uid: ADMIN2_UID };
         return { err: { code: 'auth/invalid-credential', message: 'bad credentials' } };
       }
       if (op === 'set') { this.write([{ op: 'set', path: a.path, data: a.data, merge: a.merge }], a.uid); return {}; }
@@ -262,7 +266,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
     server.close();
   }
 
-  Object.assign(world, { open, login, close, ADMIN_UID, ADMIN_EMAIL, ADMIN_PASSWORD });
+  Object.assign(world, { open, login, close, ADMIN_UID, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN2_PASSWORD });
   return world;
 }
 

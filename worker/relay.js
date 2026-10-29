@@ -6,7 +6,7 @@
 import { connect } from 'cloudflare:sockets';
 
 const PROJECT_ID = 'laural-shavencafe';
-const ADMIN_UID = '4FSqW048fSdUFMQZJ1OJVp7GLob2';
+const ADMIN_UIDS = ['4FSqW048fSdUFMQZJ1OJVp7GLob2', 'Sa0bXzyAK6fGrOioIg7x9qizB792'];
 const REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
 const ORIGIN = 'https://andrewvijaykumar123.github.io';
 const WORKFLOWS = ['mailer.yml', 'daily-report.yml'];
@@ -39,7 +39,7 @@ async function verifyAdmin(idToken) {
   return claims.aud === PROJECT_ID
     && claims.iss === `https://securetoken.google.com/${PROJECT_ID}`
     && claims.exp > now && claims.iat <= now + 60
-    && claims.sub === ADMIN_UID
+    && ADMIN_UIDS.includes(claims.sub)
     && claims.firebase && claims.firebase.sign_in_provider === 'password';
 }
 

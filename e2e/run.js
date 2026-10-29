@@ -163,6 +163,19 @@ async function until(fn, ms = 8000, step = 60) {
     check('admin signs in', await A.page.isVisible('#app'));
   });
 
+  await scenario('second admin signs in with a username', async () => {
+    const h = await world.open('admin', { viewport: DESKTOP });
+    const p = h.page;
+    await p.waitForSelector('#lock:not([hidden])');
+    await p.fill('#email', 'LauralsHavenAdmin');
+    await p.fill('#pw', world.ADMIN2_PASSWORD);
+    await p.click('#loginBtn');
+    check('username sign-in opens the console', !!(await until(() => p.isVisible('#app'), 6000)));
+    check('second admin sees the orders board', await p.isVisible('#nav'));
+    await h.ctx.close();
+    world.pages.splice(world.pages.indexOf(h), 1);
+  });
+
   /* ---------------- Store settings ---------------- */
   await scenario('admin settings reach the storefront', async () => {
     await A.page.click('#nav [data-tab="menu"]');

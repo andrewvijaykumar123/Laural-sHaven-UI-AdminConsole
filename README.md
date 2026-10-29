@@ -6,11 +6,13 @@ Features: live kanban board with drag and drop, accept/reject with reasons, paym
 
 ## Security model
 
-The admin signs in with an Email/Password account from Firebase Authentication. `firestore.rules` allows only that account (matched by its Firebase User UID) to read orders or change status/config; customers (anonymous users) can only create valid orders while the store is open. The password lives only in Firebase; change it in Firebase Console, Authentication.
+The admin signs in with an Email/Password account from Firebase Authentication. `firestore.rules` allows only the listed accounts (matched by their Firebase User UIDs) to read orders or change status/config; customers (anonymous users) can only create valid orders while the store is open. The passwords live only in Firebase; change them in Firebase Console, Authentication.
+
+The sign-in box also accepts a plain username: `lauralshavenadmin` signs in as `lauralshavenadmin@laurals-haven.invalid` (a reserved domain that cannot receive mail, so that account has no password-reset email).
 
 ## Firestore rules
 
-Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it from Firebase Console, Authentication, Users), then publish with `firebase deploy --only firestore:rules` or paste the file into Firebase Console, Firestore, Rules.
+List the admin User UIDs in `isAdmin()` in `firestore.rules` and in `ADMIN_UIDS` in `worker/relay.js` (copy them from Firebase Console, Authentication, Users), then publish with `firebase deploy --only firestore:rules` or paste the file into Firebase Console, Firestore, Rules, and redeploy the Worker.
 
 ## Home delivery and live tracking
 

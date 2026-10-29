@@ -2,12 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Replace with the User UID of the admin user (Firebase Console > Authentication > Users).
+    // User UIDs of the admin users (Firebase Console > Authentication > Users). Keep this list in sync with ADMIN_UIDS in worker/relay.js.
     // A UID cannot be claimed by anyone else, unlike an email address.
     function isAdmin() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider == 'password'
-        && request.auth.uid == '4FSqW048fSdUFMQZJ1OJVp7GLob2';
+        && request.auth.uid in ['4FSqW048fSdUFMQZJ1OJVp7GLob2', 'Sa0bXzyAK6fGrOioIg7x9qizB792'];
     }
 
     function signedIn() {

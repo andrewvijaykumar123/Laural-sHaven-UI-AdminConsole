@@ -34,8 +34,8 @@
   const lockMsg = (t) => { $('#lockMsg').textContent = t; };
   $('#pwToggle').addEventListener('click', () => { const i = $('#pw'); i.type = i.type === 'password' ? 'text' : 'password'; });
   const AUTH_ERRORS = {
-    'auth/invalid-credential': 'Incorrect email or password.', 'auth/wrong-password': 'Incorrect email or password.', 'auth/user-not-found': 'Incorrect email or password.',
-    'auth/invalid-email': 'Enter a valid email address.', 'auth/too-many-requests': 'Too many attempts. Try again later.',
+    'auth/invalid-credential': 'Incorrect username or password.', 'auth/wrong-password': 'Incorrect username or password.', 'auth/user-not-found': 'Incorrect username or password.',
+    'auth/invalid-email': 'Enter your username or email address.', 'auth/too-many-requests': 'Too many attempts. Try again later.',
     'auth/network-request-failed': 'No connection. Check your internet and try again.', 'auth/operation-not-allowed': 'Email/password sign-in is not enabled in Firebase.',
     'auth/unauthorized-domain': 'This site is not an authorized domain in Firebase.'
   };
@@ -47,7 +47,9 @@
     const btn = $('#loginBtn');
     btn.disabled = true; btn.textContent = 'Signing in...'; lockMsg('');
     try {
-      await LH.admin.signIn($('#email').value.trim(), $('#pw').value);
+      // A plain username (no @) is an account on the reserved .invalid domain, which can never receive mail.
+      const who = $('#email').value.trim();
+      await LH.admin.signIn(who.includes('@') ? who : `${who.toLowerCase()}@laurals-haven.invalid`, $('#pw').value);
       $('#pw').value = '';
       store.del('fails');
       touch(true);
