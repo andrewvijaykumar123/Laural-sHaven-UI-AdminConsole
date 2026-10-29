@@ -62,6 +62,8 @@ const send = async (m) => { outbox.push(m); };
   LH.applyMenu({ px: { 'masala-tea': ['0:0', 'x:y', '5:-3'], 'ghost': ['0:50'] }, items: [{ id: 'masala-tea', name: 'dup', cat: 'desserts' }, { id: 'no-cat', name: 'x', cat: 'nope' }], hid: ['ghost'] });
   assert.strictEqual(LH.ITEMS.get('masala-tea').price, base, 'invalid price history is ignored');
   assert.ok(!LH.ITEMS.has('ghost') && !LH.ITEMS.has('no-cat'), 'unknown or invalid entries are ignored');
+  LH.applyMenu({ ts: 1, px: { 'evil-item': ['1:50'] }, cats: [{ id: 'evil', name: 'Evil', icon: '<img src=x onerror=1>"\'`=&🍰', hue: 10, tagline: 'x' }], items: [{ id: 'evil-item', name: 'E', cat: 'evil', diet: 'v', icon: '"onmouseover="x' }] });
+  assert.ok(!/[<>"'`=&]/.test(LH.MENU.find((c) => c.id === 'evil').icon + LH.ITEMS.get('evil-item').icon), 'menu icons cannot carry markup or attribute breakers');
   LH.applyMenu(null);
   assert.strictEqual(LH.HIDDEN.length, 0);
 

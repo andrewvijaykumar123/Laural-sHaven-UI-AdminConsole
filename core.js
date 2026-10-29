@@ -95,7 +95,7 @@
       const name = c && clean(c.name, 40);
       if (!name || !menuId(c.id) || catIds.has(c.id)) return;
       catIds.add(c.id);
-      o.cats.push({ id: c.id, name, icon: clean(c.icon, 8) || '🍽️', hue: (((Math.floor(Number(c.hue)) || 0) % 360) + 360) % 360, tagline: clean(c.tagline, 60) });
+      o.cats.push({ id: c.id, name, icon: cleanIcon(c.icon) || '🍽️', hue: (((Math.floor(Number(c.hue)) || 0) % 360) + 360) % 360, tagline: clean(c.tagline, 60) });
     });
     const itemIds = new Set(BASE_ITEMS.keys());
     const px = {};
@@ -108,7 +108,7 @@
       const name = i && clean(i.name, 50);
       if (!name || !menuId(i.id) || itemIds.has(i.id) || !catIds.has(i.cat) || !px[i.id]) return;
       itemIds.add(i.id);
-      o.items.push({ id: i.id, name, cat: i.cat, diet: DIET_IDS.includes(i.diet) ? i.diet : 'v', icon: clean(i.icon, 8) });
+      o.items.push({ id: i.id, name, cat: i.cat, diet: DIET_IDS.includes(i.diet) ? i.diet : 'v', icon: cleanIcon(i.icon) });
     });
     Object.keys(px).forEach((id) => { if (itemIds.has(id)) o.px[id] = px[id]; });
     o.hid = [...new Set(Array.isArray(d.hid) ? d.hid : [])].filter((id) => itemIds.has(id));
@@ -207,6 +207,8 @@
   const fmt = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001f\u007f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  // Menu icons are emoji: also drop characters that could break out of an HTML attribute, wherever the icon ends up.
+  const cleanIcon = (v) => clean(v, 8).replace(/[&"'`=]/g, '');
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const randomString = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => ALPHABET[x % ALPHABET.length]).join('');
   const newOrderId = () => `LH-${randomString(6)}`;
@@ -610,14 +612,14 @@
       if (!name || !cat || !okPrice(price)) throw new Error('Enter a name, category and a price between 1 and 9999');
       if (m.items.length >= MENU_MAX.items) throw new Error('The menu is full');
       const id = uniqueId(name, new Set([...ITEMS.keys()]));
-      m.items.push({ id, name, cat: cat.id, diet: DIET_IDS.includes(o.diet) ? o.diet : 'v', icon: clean(o.icon, 8) });
+      m.items.push({ id, name, cat: cat.id, diet: DIET_IDS.includes(o.diet) ? o.diet : 'v', icon: cleanIcon(o.icon) });
       m.px[id] = [[ts, price]];
     } else if (o.op === 'addcat') {
       const name = clean(o.name, 40);
       if (!name) throw new Error('Enter a category name');
       if (m.cats.length >= MENU_MAX.cats) throw new Error('Too many categories');
       const id = uniqueId(name, new Set(MENU.map((c) => c.id)));
-      m.cats.push({ id, name, icon: clean(o.icon, 8) || '🍽️', hue: (200 + m.cats.length * 47) % 360, tagline: clean(o.tagline, 60) });
+      m.cats.push({ id, name, icon: cleanIcon(o.icon) || '🍽️', hue: (200 + m.cats.length * 47) % 360, tagline: clean(o.tagline, 60) });
     } else if (o.op === 'hide') {
       if (!ITEMS.has(o.id)) throw new Error('Unknown item');
       const s = new Set(m.hid);
@@ -629,7 +631,7 @@
       if (!it || !name) throw new Error('Only products you added can be renamed');
       it.name = name;
       if (DIET_IDS.includes(o.diet)) it.diet = o.diet;
-      if (o.icon !== undefined) it.icon = clean(o.icon, 8);
+      if (o.icon !== undefined) it.icon = cleanIcon(o.icon);
     } else throw new Error('Unknown menu change');
     return { ...wireMenu(m), ts };
   }

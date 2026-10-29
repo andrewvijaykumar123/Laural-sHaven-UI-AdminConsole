@@ -243,6 +243,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
       viewport: opts.viewport || { width: 390, height: 844 }, hasTouch: !!opts.mobile, isMobile: !!opts.mobile,
       geolocation: opts.geo, permissions: opts.geo ? ['geolocation'] : [], serviceWorkers: 'block', acceptDownloads: true
     });
+    if (opts.init) await ctx.addInitScript(opts.init);
     await ctx.exposeBinding('__fbCall', ({ page }, op, a) => db.handle(page, op, a));
     await ctx.route((u) => u.hostname !== '127.0.0.1', (route) => {
       const host = new URL(route.request().url()).hostname;

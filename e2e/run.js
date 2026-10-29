@@ -1094,7 +1094,23 @@ async function until(fn, ms = 8000, step = 60) {
     await sleep(300);
   });
 
-  /* ---------------- Summary ---------------- */
+  /* ---------------- Hostile or corrupted browser storage ---------------- */
+  await scenario('storage: malformed saved data cannot break the storefront', async () => {
+    const bad = () => {
+      localStorage.setItem('lh.shop.orders', JSON.stringify([null, 5, { id: '<img src=x onerror=1>', it: [] }, { id: 'LH-ABC234', it: 'x', total: 1 }, { id: 'LH-ABC235', it: [['masala-tea', 1]], total: 49, status: 'completed', fb: { sr: 1e9 }, n: 'A', svc: 'take', ts: Date.now() }]));
+      localStorage.setItem('lh.shop.cart', 'null');
+      localStorage.setItem('lh.shop.profile', 'null');
+      localStorage.setItem('lh.shop.pay', JSON.stringify('<x>'));
+      localStorage.setItem('lh.shop.menu', JSON.stringify({ cats: 'x', items: [null, 1], px: [], hid: 7 }));
+      localStorage.setItem('lh.shop.cfg', JSON.stringify({ open: 'yes', oos: 'x', prep: 'zz' }));
+    };
+    const s = await newShop({ init: bad });
+    check('the menu still renders', (await s.page.locator('.card').count()) > 10);
+    await s.page.evaluate(() => document.querySelector('#ordersBtn').click());
+    check('only the one well-formed saved order is kept', (await s.page.locator('#ordersBody .order-card').count()) === 1, String(await s.page.locator('#ordersBody .order-card').count()));
+    check('no markup came from the saved data', (await s.page.locator('.order-card img, #ordersBody img').count()) === 0);
+  });
+
   const errs = world.errors;
   check('no uncaught page errors or CSP violations', errs.length === 0, errs.slice(0, 5).join(' | '));
   console.log(`\n${passed} passed, ${failed} failed`);

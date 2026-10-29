@@ -685,7 +685,7 @@
       let mk = dv.dots.get(o.id);
       if (!mk) {
         mk = L.circleMarker([o.lat, o.lng], { radius: 9, weight: 3, color: '#fff', fillOpacity: 0.95 }).addTo(c.map);
-        mk.bindTooltip(`${o.id} · ${o.n}`);
+        mk.bindTooltip(esc(`${o.id} · ${o.n}`));
         mk.on('click', () => dvSelect(o.id));
         dv.dots.set(o.id, mk);
       }
