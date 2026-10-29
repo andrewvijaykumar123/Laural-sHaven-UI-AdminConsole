@@ -929,6 +929,171 @@ async function until(fn, ms = 8000, step = 60) {
     world.relay.mode = 'ok';
   });
 
+  /* ---------------- Reschedule an event booking ---------------- */
+  await scenario('events: the owner reschedules a booking', async () => {
+    const dayKey = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return LH.dateKey(d); };
+    const D1 = dayKey(9); const D2 = dayKey(10); const D3 = dayKey(11);
+    const evStatusDoc = (id) => db.docs.get(`evstatus/${id}`) || {};
+    const busyOf = (d) => ((db.docs.get('config/events') || {}).busy || {})[d];
+    const book = (h, ev) => h.page.evaluate((x) => window.LH.publishEvent(x).then(() => 'sent', (e) => e.code || e.message), ev);
+    const evCard = (a, id) => a.page.locator(`.evcard[data-ev="${id}"]`);
+    const localEv = (h, id) => h.page.evaluate((x) => { const e = window.__lh.events.find((y) => y.id === x); return e && { d: e.d, st: e.st, h: e.h, total: e.total, status: e.status }; }, id);
+
+    for (const h of world.pages.filter((x) => x.kind === 'admin')) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }
+    const a = await newAdmin();
+    await a.page.click('#nav [data-tab="events"]');
+    await setSwitch(a, '#evToggle', true);
+    await until(() => (db.docs.get('config/events') || {}).on === true);
+    const s = await newShop();
+    const s2 = await newShop();
+    const idB = LH.newEventId();
+    await s.page.click('#eventsBtn'); await s.page.click('#eventsBody [data-evv="book"]'); await s.page.waitForSelector('#evForm');
+    await s.page.selectOption('#evType', 'bday'); await s.page.fill('#evDate', D1); await s.page.selectOption('#evStart', '1080'); await s.page.selectOption('#evHours', '3'); await s.page.fill('#evGuests', '20'); await s.page.fill('#evName', 'Meera'); await s.page.fill('#evPhone', '9876501234');
+    await s.page.click('#evSend'); await s.page.waitForSelector('#modal:not([hidden]) #modalCard .oid', { timeout: 8000 });
+    const idA = (await s.page.textContent('#modalCard .oid')).trim();
+    await s.page.keyboard.press('Escape'); await s.page.click('#eventsDrawer [data-close]', { timeout: 1500 }).catch(() => {});
+    check('customer sends a booking', !!db.docs.get(`events/${idA}`));
+    check('another customer books the next day', (await book(s2, { id: idB, ty: 'anniv', d: D2, st: 1080, h: 2, g: 8, dec: false, n: 'Karan', p: '9123456780' })) === 'sent');
+    await evCard(a, idA).waitFor();
+    await evCard(a, idB).waitFor();
+    check('pending and confirmed bookings offer Reschedule', (await evCard(a, idA).locator('[data-evact="move"]').count()) === 1);
+    await evCard(a, idA).locator('[data-evact="confirmed"]').click();
+    await until(() => evStatusDoc(idA).s === 'confirmed');
+    await evCard(a, idB).locator('[data-evact="confirmed"]').click();
+    await until(() => evStatusDoc(idB).s === 'confirmed');
+    check('both slots are published as busy', !!(await until(() => busyOf(D1) && busyOf(D2))));
+
+    await evCard(a, idA).locator('[data-evact="move"]').click();
+    await a.page.waitForSelector('#mvDate');
+    check('modal starts on the current time and refuses a no-op', (await a.page.inputValue('#mvDate')) === D1 && (await a.page.isDisabled('#mvSave')) && /different/i.test(await a.page.textContent('#mvNote')));
+    await a.page.fill('#mvDate', D2);
+    check('moving onto another confirmed booking is flagged', !!(await until(async () => /Overlaps confirmed booking/.test(await a.page.textContent('#mvNote')))) && (await a.page.isDisabled('#mvSave')));
+    await a.page.fill('#mvDate', dayKey(400));
+    check('a date too far ahead is refused', !!(await until(async () => /within the next/.test(await a.page.textContent('#mvNote')))) && (await a.page.isDisabled('#mvSave')));
+    await a.page.fill('#mvDate', D3);
+    await a.page.selectOption('#mvHours', '4');
+    check('the new total is shown', !!(await until(async () => (await a.page.textContent('#mvNote')).includes(fmt(4500)))) && !(await a.page.isDisabled('#mvSave')), await a.page.textContent('#mvNote'));
+    await a.page.click('#mvSave');
+    check('reschedule is published on the booking status', !!(await until(() => { const m = evStatusDoc(idA).mv; return m && m.d === D3 && m.st === 1080 && m.h === 4 && m.od === D1 && m.oh === 3; })), JSON.stringify(evStatusDoc(idA)));
+    check('status stays confirmed', evStatusDoc(idA).s === 'confirmed');
+    check('old slot is released and the new one published', !!(await until(() => !busyOf(D1) && (busyOf(D3) || []).includes('1080-1320'))), JSON.stringify((db.docs.get('config/events') || {}).busy));
+    const ct = await evCard(a, idA).textContent();
+    check('admin card shows the new time and where it was', ct.includes('6:00 PM - 10:00 PM') && /Rescheduled/.test(ct) && ct.includes(fmt(4500)));
+    check('customer sees the new time and price live', !!(await until(async () => { const e = await localEv(s, idA); return e && e.d === D3 && e.h === 4 && e.total === 4500 && e.status === 'confirmed'; })));
+    await s.page.click('#eventsBtn');
+    const mine = await s.page.textContent(`.ev-card[data-ev="${idA}"]`);
+    check('customer booking list says it was rescheduled', /Rescheduled from/.test(mine) && mine.includes('6:00 PM - 10:00 PM'), mine.slice(0, 160));
+    await s.page.click('#eventsDrawer [data-close]');
+    const s3 = await newShop();
+    await s3.page.click('#eventsBtn'); await s3.page.click('#eventsBody [data-evv="book"]'); await s3.page.waitForSelector('#evForm');
+    await s3.page.fill('#evDate', D1); await s3.page.selectOption('#evStart', '1080');
+    check('the old date is open for other customers again', !!(await until(async () => (await s3.page.locator('#evAvail .ev-bad').count()) === 0)));
+    await s3.page.fill('#evDate', D3);
+    check('the new date is shown as taken', !!(await until(async () => (await s3.page.locator('#evAvail .ev-bad').count()) === 1)));
+
+    await evCard(a, idB).locator('[data-evact="move"]').click();
+    await a.page.fill('#mvDate', D3);
+    check('moving onto the rescheduled booking is flagged too', !!(await until(async () => /Overlaps confirmed booking/.test(await a.page.textContent('#mvNote')))));
+    await a.page.keyboard.press('Escape');
+
+    const a2 = await newAdmin();
+    await a2.page.click('#nav [data-tab="events"]');
+    await a2.page.selectOption('#evFilter', 'all');
+    await evCard(a2, idA).waitFor();
+    const c2 = await evCard(a2, idA).textContent();
+    check('a second admin device shows the rescheduled time', !!(await until(async () => { const t = await evCard(a2, idA).textContent(); return t.includes('6:00 PM - 10:00 PM') && /Rescheduled/.test(t); })), c2.slice(0, 200));
+
+    await evCard(a, idA).locator('[data-evact="cancelled"]').click();
+    await a.page.click('#modalCard [data-evreason]');
+    await until(() => evStatusDoc(idA).s === 'cancelled');
+    check('a cancelled booking keeps its history but cannot be moved', !!evStatusDoc(idA).mv && (await evCard(a, idA).locator('[data-evact="move"]').count()) === 0);
+    await setSwitch(a, '#evToggle', false);
+  });
+
+  /* ---------------- Owner edits the menu ---------------- */
+  await scenario('menu: the owner changes prices and adds products and categories', async () => {
+    for (const h of world.pages.filter((x) => x.kind === 'admin')) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }
+    const a = await newAdmin();
+    const s1 = await newShop();
+    const base = items[0].price;
+    const o1 = await place(s1, { items: [0], svc: 'take' });
+    await closeModal(s1);
+    check('order placed at the original price', db.docs.get(`orders/${o1.id}`).total === base);
+    await card(a, o1.id).waitFor();
+
+    await a.page.click('#nav [data-tab="menu"]');
+    await a.page.click(`[data-edit-item="${I(0)}"]`);
+    await a.page.fill('#miPrice', '0');
+    await a.page.click('#miSave');
+    check('a zero price is refused', !!(await until(async () => /between 1 and 9999/.test(await a.page.textContent('#toasts'))) ) && !db.docs.has('config/menu'));
+    await a.page.fill('#miPrice', '77');
+    await a.page.click('#miSave');
+    const menuDoc = () => db.docs.get('config/menu') || {};
+    check('new price is saved with the old one kept in the history', !!(await until(() => (menuDoc().px || {})[I(0)])) && menuDoc().px[I(0)][0] === `0:${base}` && /:77$/.test(menuDoc().px[I(0)].slice(-1)[0]), JSON.stringify(menuDoc().px));
+    check('storefront shows the new price live', !!(await until(async () => (await s1.page.textContent(`.card[data-id="${I(0)}"] .price`)).includes('77'))));
+    check('admin menu shows the new price', (await a.page.textContent(`.mitem[data-id="${I(0)}"] small`)).includes('77'));
+    const s2 = await newShop();
+    const o2 = await place(s2, { items: [0], svc: 'take' });
+    await closeModal(s2);
+    check('a new order is priced at the new rate', db.docs.get(`orders/${o2.id}`).total === 77);
+    await a.page.click('#nav [data-tab="orders"]');
+    await card(a, o2.id).waitFor();
+    check('the older order keeps its original total on the board', (await card(a, o1.id).textContent()).includes(fmt(base)) && (await card(a, o2.id).textContent()).includes(fmt(77)));
+
+    await a.page.click('#nav [data-tab="menu"]');
+    await a.page.click('#addCategory');
+    await a.page.fill('#acName', 'Desserts');
+    await a.page.fill('#acIcon', '🍰');
+    await a.page.click('#acSave');
+    check('a new category is saved', !!(await until(() => (menuDoc().cats || []).some((c) => c.id === 'desserts' && c.name === 'Desserts'))));
+    await a.page.waitForSelector('#apName');
+    await a.page.fill('#apName', 'Rasmalai Cup');
+    await a.page.fill('#apPrice', '120');
+    check('the category is preselected for the new product', (await a.page.inputValue('#apCat')) === 'desserts');
+    await a.page.click('#apSave');
+    check('a new product is saved with its price', !!(await until(() => (menuDoc().items || []).some((i) => i.id === 'rasmalai-cup' && i.cat === 'desserts'))) && /:120$/.test(((menuDoc().px || {})['rasmalai-cup'] || [''])[0]), JSON.stringify(menuDoc().items));
+    check('admin lists the new product in its category', !!(await until(() => a.page.locator('.mcat[data-cat="desserts"] .mitem[data-id="rasmalai-cup"]').count())));
+    check('storefront shows the new category and product live', !!(await until(async () => (await s1.page.locator('#cat-desserts .card[data-id="rasmalai-cup"]').count()) === 1 && (await s1.page.locator('.chip[data-cat="desserts"]').count()) === 1)));
+    check('storefront counts follow the menu', (await s1.page.textContent('#menuCount')).trim() === String(items.length + 1), await s1.page.textContent('#menuCount'));
+
+    const s3 = await newShop();
+    check('a brand-new visitor gets the owner menu', !!(await until(async () => (await s3.page.locator('#cat-desserts .card[data-id="rasmalai-cup"]').count()) === 1)));
+    items.push({ id: 'rasmalai-cup', name: 'Rasmalai Cup', price: 120 });
+    const o3 = await place(s3, { items: [items.length - 1, 0], svc: 'take' });
+    await closeModal(s3);
+    check('an order with the new product is priced correctly', db.docs.get(`orders/${o3.id}`).total === 120 + 77 && db.docs.get(`orders/${o3.id}`).it.includes('rasmalai-cup:1'), JSON.stringify(db.docs.get(`orders/${o3.id}`)));
+    await a.page.click('#nav [data-tab="orders"]');
+    await card(a, o3.id).waitFor();
+    check('admin shows the product by name', (await card(a, o3.id).textContent()).includes('Rasmalai Cup'));
+
+    await a.page.click('#nav [data-tab="menu"]');
+    await a.page.click(`[data-edit-item="${I(0)}"]`);
+    await a.page.click('#miHide');
+    check('hiding removes the item from the storefront', !!(await until(async () => (await s1.page.locator(`.card[data-id="${I(0)}"]`).count()) === 0)));
+    check('hidden items are listed so they can be restored', !!(await until(() => a.page.locator(`[data-show-item="${I(0)}"]`).count())));
+    await a.page.click('#nav [data-tab="orders"]');
+    check('old orders with a hidden item still read correctly', (await card(a, o1.id).textContent()).includes(fmt(base)));
+    await a.page.reload();
+    await a.page.waitForSelector('#app:not([hidden])');
+    await a.page.waitForSelector('#livePill.up');
+    await a.page.click('#nav [data-tab="orders"]');
+    check('after a reload old orders keep their original totals', !!(await until(async () => (await a.page.locator(`.ocard[data-id="${o1.id}"]`).count()) === 1 && (await card(a, o1.id).textContent()).includes(fmt(base)) && (await card(a, o2.id).textContent()).includes(fmt(77)), 6000)));
+    await a.page.click('#nav [data-tab="menu"]');
+    await a.page.click(`[data-show-item="${I(0)}"]`);
+    check('showing it again restores it', !!(await until(async () => (await s1.page.locator(`.card[data-id="${I(0)}"]`).count()) === 1)));
+
+    await a.page.click(`[data-edit-item="rasmalai-cup"]`);
+    await a.page.fill('#miName', 'Rasmalai Bowl');
+    await a.page.fill('#miPrice', '135');
+    await a.page.click('#miSave');
+    check('a product you added can be renamed and repriced', !!(await until(() => (menuDoc().items || []).some((i) => i.name === 'Rasmalai Bowl') && /:135$/.test(menuDoc().px['rasmalai-cup'].slice(-1)[0]))));
+    check('the rename reaches the storefront', !!(await until(async () => /Rasmalai Bowl/.test(await s1.page.textContent('#cat-desserts')))));
+    await setSwitch(a, '[data-item="rasmalai-cup"]', false);
+    check('a new product can be marked sold out', !!(await until(async () => (await s1.page.locator('.card[data-id="rasmalai-cup"].sold').count()) === 1, 5000)));
+    await setSwitch(a, '[data-item="rasmalai-cup"]', true);
+    await sleep(300);
+  });
+
   /* ---------------- Summary ---------------- */
   const errs = world.errors;
   check('no uncaught page errors or CSP violations', errs.length === 0, errs.slice(0, 5).join(' | '));

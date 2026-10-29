@@ -310,3 +310,5 @@ select{height:2.875rem}
 .evcard .ev-price{font-size:.88rem}
 .evcard .ev-price b{color:var(--accent)}
 .evcard .fb-who a{color:var(--accent);font-weight:700}
+.modal-card label.muted{display:block;font-size:.8rem;margin:.25rem 0 .2rem}
+.modal-card .acts{margin-top:.25rem}

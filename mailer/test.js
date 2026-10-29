@@ -45,6 +45,25 @@ const send = async (m) => { outbox.push(m); };
   assert.ok(LH.inEventWindow(tomorrow) && !LH.inEventWindow('2001-01-01'));
   assert.ok(LH.slotsClash(1140, 2, [[1080, 1260]]) && !LH.slotsClash(1260, 2, [[1080, 1260]]) && !LH.slotsClash(960, 2, [[1080, 1260]]));
   assert.strictEqual(LH.eventRange(1080, 3), '6:00 PM - 9:00 PM');
+  const mv = LH.validMove({ d: tomorrow, st: 1140, h: 2, od: tomorrow, os: 1080, oh: 3 });
+  assert.ok(mv && mv.os === 1080 && LH.moveEvent(ev(), mv).total === 3000, 'a moved booking is requoted');
+  assert.strictEqual(LH.validMove({ d: tomorrow, st: 1260, h: 4 }), null, 'a move must still end by midnight');
+
+  // menu changes: an order keeps the price it was placed at; hidden and added items work
+  const T1 = Date.parse('2026-10-20T10:00:00Z'); const T2 = Date.parse('2026-10-25T10:00:00Z');
+  const base = LH.ITEMS.get('masala-tea').price;
+  LH.applyMenu({ ts: T2, px: { 'masala-tea': [`0:${base}`, `${T2}:99`], 'rasmalai-cup': [`${T2}:120`] }, hid: ['veg-momos'], cats: [{ id: 'desserts', name: 'Desserts', icon: '🍰', hue: 300, tagline: 'Sweet' }], items: [{ id: 'rasmalai-cup', name: 'Rasmalai Cup', cat: 'desserts', diet: 'v', icon: '' }] });
+  assert.strictEqual(LH.priceAt('masala-tea', T1), base, 'before the change');
+  assert.strictEqual(LH.priceAt('masala-tea', T2 + 1), 99, 'after the change');
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T1, it: [['masala-tea', 2]] }).total, base * 2);
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T2 + 5, it: [['masala-tea', 2], ['rasmalai-cup', 1]] }).total, 198 + 120);
+  assert.ok(LH.ITEMS.get('veg-momos').hide && !LH.MENU.some((c) => c.items.some((i) => i.id === 'veg-momos')) && LH.HIDDEN.length === 1, 'hidden items stay readable but are off the menu');
+  assert.strictEqual(LH.MENU.find((c) => c.id === 'desserts').items[0].price, 120);
+  LH.applyMenu({ px: { 'masala-tea': ['0:0', 'x:y', '5:-3'], 'ghost': ['0:50'] }, items: [{ id: 'masala-tea', name: 'dup', cat: 'desserts' }, { id: 'no-cat', name: 'x', cat: 'nope' }], hid: ['ghost'] });
+  assert.strictEqual(LH.ITEMS.get('masala-tea').price, base, 'invalid price history is ignored');
+  assert.ok(!LH.ITEMS.has('ghost') && !LH.ITEMS.has('no-cat'), 'unknown or invalid entries are ignored');
+  LH.applyMenu(null);
+  assert.strictEqual(LH.HIDDEN.length, 0);
 
   // pending: received; accepted: confirm; ready: ready; repeat: nothing
   const orders = [{ id: 'LH-AAAAAA', data: doc('LH-AAAAAA'), ts: T0 - 600000 }];

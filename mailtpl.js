@@ -27,7 +27,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
   function itemsTable(LH, o) {
     const rows = o.it.map(([id, q]) => {
       const it = LH.ITEMS.get(id);
-      return `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">${q} &times; ${LH.esc(it.name)}</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${LH.esc(LH.fmt(it.price * q))}</td></tr>`;
+      return `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">${q} &times; ${LH.esc(it.name)}</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${LH.esc(LH.fmt(LH.unit(o, id) * q))}</td></tr>`;
     }).join('');
     const feeRow = o.svc === 'deliver' ? `<tr><td style="padding:6px 0;border-bottom:1px solid #eee">Delivery</td><td align="right" style="padding:6px 0;border-bottom:1px solid #eee">${o.fee ? LH.esc(LH.fmt(o.fee)) : 'Free'}</td></tr>` : '';
     return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">${rows}${feeRow}
@@ -43,7 +43,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
 
   const where = (o) => (o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? `Delivery to ${o.addr}` : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`);
   const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
-  const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
+  const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.unit(o, id) * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
   const placedAt = (o) => new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' ');
 
   /* ---- Invoice (no GST). One layout for the printed bill and the emailed copy; inline styles only so it survives mail clients. ---- */
@@ -76,7 +76,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
     const td = 'padding:9px 6px;border-bottom:1px solid #e5e7eb;font-size:13px';
     const rows = o.it.map(([id, q], i) => {
       const it = LH.ITEMS.get(id);
-      return `<tr><td style="${td};color:#6b7280">${i + 1}</td><td style="${td}">${e(it.name)}</td><td align="center" style="${td}">${q}</td><td align="right" style="${td}">${f(it.price)}</td><td align="right" style="${td}">${f(it.price * q)}</td></tr>`;
+      return `<tr><td style="${td};color:#6b7280">${i + 1}</td><td style="${td}">${e(it.name)}</td><td align="center" style="${td}">${q}</td><td align="right" style="${td}">${f(LH.unit(o, id))}</td><td align="right" style="${td}">${f(LH.unit(o, id) * q)}</td></tr>`;
     }).join('');
     const sum = (label, val, strong) => `<tr><td style="padding:5px 6px;font-size:${strong ? 15 : 13}px;${strong ? 'font-weight:700;border-top:2px solid #1f2937;' : 'color:#4b5563;'}">${label}</td><td align="right" style="padding:5px 6px;font-size:${strong ? 15 : 13}px;${strong ? 'font-weight:700;border-top:2px solid #1f2937;' : ''}">${val}</td></tr>`;
     const serve = o.svc === 'take' ? 'Takeaway' : del ? 'Home delivery' : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`;
@@ -101,7 +101,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
   function invoiceText(LH, o, ctx = {}) {
     const del = o.svc === 'deliver';
     const fee = del ? (o.fee || 0) : 0;
-    const lines = o.it.map(([id, q], i) => `${i + 1}. ${LH.ITEMS.get(id).name}  ${q} x ${LH.fmt(LH.ITEMS.get(id).price)} = ${LH.fmt(LH.ITEMS.get(id).price * q)}`);
+    const lines = o.it.map(([id, q], i) => `${i + 1}. ${LH.ITEMS.get(id).name}  ${q} x ${LH.fmt(LH.unit(o, id))} = ${LH.fmt(LH.unit(o, id) * q)}`);
     return [`INVOICE - ${CAFE.name}`, `Phone: ${CAFE.phone}`, `Google Maps: ${CAFE.map}`, '',
       `Invoice no: ${o.id}`, `Date: ${invoiceDate(o.ts)}`, `Billed to: ${o.n}, ${o.p}`, del ? `Delivery address: ${o.addr}` : where(o), `Payment: ${payMethod(o)} (${ctx.paid ? 'paid' : 'payment due'})`, '',
       ...lines, '', `Subtotal  ${LH.fmt(o.total - fee)}`, ...(del ? [`Delivery charge  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : []), `GST: ${TAX_NOTE}`, `TOTAL  ${LH.fmt(o.total)}`, rupeesInWords(o.total), ''].join('\n');

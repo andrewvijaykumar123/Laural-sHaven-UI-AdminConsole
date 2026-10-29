@@ -64,18 +64,87 @@
     return hit ? hit[1] : fallback;
   };
 
-  const ITEMS = new Map();
-  const MENU = RAW_MENU.map(([name, icon, hue, tagline, items]) => {
+  const BASE = RAW_MENU.map(([name, icon, hue, tagline, items]) => {
     const cat = { id: slug(name), name, icon, hue, tagline, items: [] };
-    items.forEach(([iname, price, diet]) => {
-      const item = { id: slug(iname), name: iname, price, diet, cat: cat.id, icon: iconFor(iname, icon), best: false };
-      item.best = BESTSELLERS.has(item.id);
-      if (ITEMS.has(item.id)) throw new Error(`Duplicate menu id ${item.id}`);
-      ITEMS.set(item.id, item);
-      cat.items.push(item);
-    });
+    items.forEach(([iname, price, diet]) => cat.items.push({ id: slug(iname), name: iname, price, diet, cat: cat.id, icon: iconFor(iname, icon), best: BESTSELLERS.has(slug(iname)) }));
     return cat;
   });
+  {
+    const seen = new Set();
+    BASE.forEach((c) => c.items.forEach((i) => { if (seen.has(i.id)) throw new Error(`Duplicate menu id ${i.id}`); seen.add(i.id); }));
+  }
+  const BASE_ITEMS = new Map(BASE.flatMap((c) => c.items).map((i) => [i.id, i]));
+
+  /* The owner's changes live in config/menu: price history (px: id -> ["ts:price", ...]), hidden items (hid), extra categories (cats)
+     and extra products (items). ITEMS holds every item (hidden ones too, so old orders still read), MENU only what customers can order.
+     Both are rebuilt in place, so anything holding a reference to them sees the change. */
+  const ITEMS = new Map();
+  const MENU = [];
+  const HIDDEN = [];
+  const MENU_MAX = { items: 300, cats: 24, hist: 12, price: 9999 };
+  const DIET_IDS = ['v', 'e', 'n'];
+  let menuDoc = { ts: 0, px: {}, hid: [], cats: [], items: [] };
+  const menuId = (s) => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(s);
+  const okPrice = (p) => Number.isInteger(p) && p >= 1 && p <= MENU_MAX.price;
+
+  function cleanMenu(d) {
+    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], cats: [], items: [] };
+    if (!d || typeof d !== 'object') return o;
+    const catIds = new Set(BASE.map((c) => c.id));
+    (Array.isArray(d.cats) ? d.cats : []).slice(0, MENU_MAX.cats).forEach((c) => {
+      const name = c && clean(c.name, 40);
+      if (!name || !menuId(c.id) || catIds.has(c.id)) return;
+      catIds.add(c.id);
+      o.cats.push({ id: c.id, name, icon: clean(c.icon, 8) || '🍽️', hue: (((Math.floor(Number(c.hue)) || 0) % 360) + 360) % 360, tagline: clean(c.tagline, 60) });
+    });
+    const itemIds = new Set(BASE_ITEMS.keys());
+    const px = {};
+    Object.keys(d.px && typeof d.px === 'object' ? d.px : {}).slice(0, 500).forEach((id) => {
+      const h = (Array.isArray(d.px[id]) ? d.px[id] : []).map((s) => { const [t, p] = String(s).split(':').map(Number); return [t, p]; })
+        .filter(([t, p]) => Number.isFinite(t) && t >= 0 && okPrice(p)).sort((a, b) => a[0] - b[0]).slice(-MENU_MAX.hist);
+      if (h.length) px[id] = h;
+    });
+    (Array.isArray(d.items) ? d.items : []).slice(0, MENU_MAX.items).forEach((i) => {
+      const name = i && clean(i.name, 50);
+      if (!name || !menuId(i.id) || itemIds.has(i.id) || !catIds.has(i.cat) || !px[i.id]) return;
+      itemIds.add(i.id);
+      o.items.push({ id: i.id, name, cat: i.cat, diet: DIET_IDS.includes(i.diet) ? i.diet : 'v', icon: clean(i.icon, 8) });
+    });
+    Object.keys(px).forEach((id) => { if (itemIds.has(id)) o.px[id] = px[id]; });
+    o.hid = [...new Set(Array.isArray(d.hid) ? d.hid : [])].filter((id) => itemIds.has(id));
+    return o;
+  }
+
+  function applyMenu(d) {
+    menuDoc = cleanMenu(d);
+    const hid = new Set(menuDoc.hid);
+    ITEMS.clear(); MENU.length = 0; HIDDEN.length = 0;
+    const cats = [...BASE.map((c) => ({ ...c, items: [] })), ...menuDoc.cats.map((c) => ({ ...c, custom: true, items: [] }))];
+    const byCat = new Map(cats.map((c) => [c.id, c]));
+    const put = (it) => {
+      const item = { ...it, hide: hid.has(it.id) };
+      const h = menuDoc.px[it.id];
+      if (h) item.price = h[h.length - 1][1];
+      ITEMS.set(item.id, item);
+      (item.hide ? HIDDEN : byCat.get(item.cat).items).push(item);
+    };
+    BASE.forEach((c) => c.items.forEach(put));
+    menuDoc.items.forEach((i) => put({ ...i, price: 0, best: false, custom: true, icon: i.icon || iconFor(i.name, byCat.get(i.cat).icon) }));
+    cats.forEach((c) => MENU.push(c));
+  }
+  applyMenu(null);
+
+  // The price an item had when an order was placed, so changing a price never rewrites old orders.
+  function priceAt(id, ts) {
+    const it = ITEMS.get(id);
+    if (!it) return 0;
+    const h = menuDoc.px[id];
+    if (!h) return it.price;
+    let p = h[0][1];
+    for (const [t, v] of h) if (t <= ts) p = v;
+    return p;
+  }
+  const unit = (o, id) => priceAt(id, o && Number(o.ts) ? Number(o.ts) : now());
 
   /* ---------- Status model ---------- */
   const STATUS = {
@@ -167,7 +236,7 @@
   const emit = (event, data) => (handlers[event] || []).slice().forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });
 
   /* ---------- Order and event validation ---------- */
-  function priceLines(lines) {
+  function priceLines(lines, ts = now()) {
     const merged = new Map();
     (Array.isArray(lines) ? lines : []).slice(0, 60).forEach((line) => {
       const id = Array.isArray(line) ? line[0] : line && line.id;
@@ -176,21 +245,21 @@
       merged.set(id, Math.min(25, (merged.get(id) || 0) + qty));
     });
     const it = [...merged.entries()];
-    const total = it.reduce((sum, [id, qty]) => sum + ITEMS.get(id).price * qty, 0);
+    const total = it.reduce((sum, [id, qty]) => sum + priceAt(id, ts) * qty, 0);
     return { it, total };
   }
 
   const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
   function validateOrder(o) {
     if (!o || !validId(o.id)) return null;
-    const { it, total } = priceLines(o.it);
+    let ts = Number(o.ts);
+    if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
+    const { it, total } = priceLines(o.it, ts);
     if (!it.length) return null;
     const name = clean(o.n, 40);
     const phone = String(o.p ?? '').replace(/[^\d+]/g, '').slice(0, 15);
     const svc = o.svc === 'take' ? 'take' : o.svc === 'deliver' ? 'deliver' : 'dine';
     if (!name || phone.replace(/\D/g, '').length < (svc === 'deliver' ? 10 : 7)) return null;
-    let ts = Number(o.ts);
-    if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
     const em = clean(o.em, 80).toLowerCase();
     const out = {
       id: o.id, ts, n: name, p: phone, em: EMAIL_RE.test(em) ? em : '', nt: clean(o.nt, 140), it, total,
@@ -466,7 +535,7 @@
     }
     if (f.k === 'cfg') {
       return write(FB.setDoc(FB.doc(db, 'config', 'store'), {
-        open: !!f.open, oos: (Array.isArray(f.oos) ? f.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
+        open: !!f.open, oos: (Array.isArray(f.oos) ? f.oos : []).filter(menuId).slice(0, 200),
         prep: Math.min(180, Math.max(1, Math.floor(Number(f.prep)) || 12)), note: clean(f.note, 120), del: f.del === true, ts
       }, { merge: true }));
     }
@@ -491,8 +560,11 @@
     }
     if (f.k === 'evst') {
       if (!validEventId(f.id) || !EVENT_STATUS[f.s]) throw new Error('Invalid event status');
-      return write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts }, { merge: true }));
+      const mv = f.mv ? validMove(f.mv) : null;
+      if (f.mv && !mv) throw new Error('Invalid new time');
+      return write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...(mv ? { mv } : {}) }, { merge: true }));
     }
+    if (f.k === 'menu') return editMenu(f.op);
     if (f.k === 'evcfg') {
       // Written whole (no merge) so dates that are no longer busy disappear.
       const busy = {};
@@ -507,6 +579,100 @@
     throw new Error('Unknown action');
   }
 
+  /* ---------- Menu editing (admin): every change rewrites config/menu whole ---------- */
+  const wireMenu = (m) => ({
+    cats: m.cats, items: m.items, hid: m.hid,
+    px: Object.fromEntries(Object.entries(m.px).map(([id, h]) => [id, h.map(([t, p]) => `${t}:${p}`)]))
+  });
+  const uniqueId = (base, taken) => {
+    const b = (slug(base) || 'item').slice(0, 50);
+    let id = b;
+    for (let n = 2; taken.has(id); n++) id = `${b}-${n}`;
+    return id;
+  };
+
+  function menuAfter(op) {
+    const m = JSON.parse(JSON.stringify(menuDoc));
+    const ts = Math.max(now(), menuDoc.ts + 1);
+    const o = op || {};
+    if (o.op === 'price') {
+      const it = ITEMS.get(o.id);
+      const price = Math.floor(Number(o.price));
+      if (!it || !okPrice(price)) throw new Error('Enter a price between 1 and 9999');
+      if (price === it.price) return null;
+      const h = m.px[o.id] || (BASE_ITEMS.has(o.id) ? [[0, BASE_ITEMS.get(o.id).price]] : []);
+      h.push([Math.max(ts, ((h[h.length - 1] || [0])[0]) + 1), price]);
+      m.px[o.id] = h.slice(-MENU_MAX.hist);
+    } else if (o.op === 'add') {
+      const name = clean(o.name, 50);
+      const price = Math.floor(Number(o.price));
+      const cat = MENU.find((c) => c.id === o.cat);
+      if (!name || !cat || !okPrice(price)) throw new Error('Enter a name, category and a price between 1 and 9999');
+      if (m.items.length >= MENU_MAX.items) throw new Error('The menu is full');
+      const id = uniqueId(name, new Set([...ITEMS.keys()]));
+      m.items.push({ id, name, cat: cat.id, diet: DIET_IDS.includes(o.diet) ? o.diet : 'v', icon: clean(o.icon, 8) });
+      m.px[id] = [[ts, price]];
+    } else if (o.op === 'addcat') {
+      const name = clean(o.name, 40);
+      if (!name) throw new Error('Enter a category name');
+      if (m.cats.length >= MENU_MAX.cats) throw new Error('Too many categories');
+      const id = uniqueId(name, new Set(MENU.map((c) => c.id)));
+      m.cats.push({ id, name, icon: clean(o.icon, 8) || '🍽️', hue: (200 + m.cats.length * 47) % 360, tagline: clean(o.tagline, 60) });
+    } else if (o.op === 'hide') {
+      if (!ITEMS.has(o.id)) throw new Error('Unknown item');
+      const s = new Set(m.hid);
+      if (o.hide) s.add(o.id); else s.delete(o.id);
+      m.hid = [...s];
+    } else if (o.op === 'edit') {
+      const it = m.items.find((x) => x.id === o.id);
+      const name = clean(o.name, 50);
+      if (!it || !name) throw new Error('Only products you added can be renamed');
+      it.name = name;
+      if (DIET_IDS.includes(o.diet)) it.diet = o.diet;
+      if (o.icon !== undefined) it.icon = clean(o.icon, 8);
+    } else throw new Error('Unknown menu change');
+    return { ...wireMenu(m), ts };
+  }
+
+  async function editMenu(op) {
+    const next = menuAfter(op);
+    if (!next) return null;
+    const prev = { ...wireMenu(menuDoc), ts: menuDoc.ts };
+    applyMenu(next);
+    store.set('menu', next);
+    emit('menu', { ts: next.ts });
+    const FB = window.LH_FB;
+    try { await write(FB.setDoc(FB.doc(firebase().db, 'config', 'menu'), next)); } catch (e) {
+      applyMenu(prev);
+      store.set('menu', prev);
+      emit('menu', { ts: prev.ts });
+      throw e;
+    }
+    return next;
+  }
+
+  function applyMenuDoc(d) {
+    const ts = Number(d && d.ts) || 0;
+    if (ts < menuDoc.ts) return;
+    applyMenu(d);
+    store.set('menu', { ...wireMenu(menuDoc), ts });
+    emit('menu', { ts });
+  }
+
+  /* Moving a booking: the admin writes the new time on evstatus/{id}.mv; every device then applies it to its copy of the booking. */
+  function validMove(m) {
+    if (!m || typeof m !== 'object') return null;
+    const st = Math.floor(Number(m.st));
+    const h = Math.floor(Number(m.h));
+    if (!validDateKey(m.d) || !(st >= EVENT.OPEN && st <= EVENT.LAST_START && st % EVENT.STEP === 0) || !(h >= EVENT.MIN_H && h <= EVENT.MAX_H) || st + h * 60 > EVENT.CLOSE) return null;
+    const out = { d: m.d, st, h };
+    const os = Math.floor(Number(m.os));
+    const oh = Math.floor(Number(m.oh));
+    if (validDateKey(m.od) && os >= 0 && os < 1440 && oh >= 1 && oh <= EVENT.MAX_H) Object.assign(out, { od: m.od, os, oh });
+    return out;
+  }
+  const moveEvent = (e, mv) => ({ ...e, d: mv.d, st: mv.st, h: mv.h, total: eventQuote(mv.h, e.dec).total });
+
   function applyCfgDoc(d) {
     const clr = Number(d.clr) || 0;
     if (clr > lastClr) { lastClr = clr; emit('clear', { ts: clr }); }
@@ -515,7 +681,7 @@
     const ts = Number(d.ts) || 0;
     if (d.open === undefined || ts < cfg.ts) return;
     cfg = {
-      open: !!d.open, oos: (Array.isArray(d.oos) ? d.oos : []).filter((id) => ITEMS.has(id)).slice(0, 200),
+      open: !!d.open, oos: (Array.isArray(d.oos) ? d.oos : []).filter(menuId).slice(0, 200),
       prep: Math.min(180, Math.max(1, Math.floor(Number(d.prep)) || 12)), note: clean(d.note, 120), del: d.del === true, ts
     };
     store.set('cfg', cfg);
@@ -538,7 +704,7 @@
   }
 
   function emitEvStatus(id, d) {
-    if (typeof d.s === 'string' && EVENT_STATUS[d.s]) emit('evstatus', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
+    if (typeof d.s === 'string' && EVENT_STATUS[d.s]) emit('evstatus', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0, mv: validMove(d.mv) });
   }
 
   const lastStatus = new Map();
@@ -558,6 +724,8 @@
 
   /* ---------- Streams ---------- */
   const streams = {};
+  let menuResolve;
+  const menuReady = new Promise((r) => { menuResolve = r; });
   function connect(name) {
     if (streams[name]) return;
     streams[name] = true;
@@ -583,8 +751,15 @@
     async function attach() {
       try {
         const FB = window.LH_FB;
+        // Orders, bookings and ratings are read against the menu, so wait (briefly) for the owner's menu changes first.
+        if (name !== 'ops') await Promise.race([menuReady, new Promise((r) => setTimeout(r, 4000))]);
         if (name === 'ops') {
-          mark('cfg', false); mark('ev', false);
+          mark('cfg', false); mark('ev', false); mark('menu', false);
+          offs.push(FB.onSnapshot(FB.doc(firebase().db, 'config', 'menu'), MD, (snap) => {
+            synced('menu', snap);
+            if (snap.exists()) applyMenuDoc(snap.data());
+            menuResolve();
+          }, (e) => retry('menu', e)));
           offs.push(FB.onSnapshot(FB.doc(firebase().db, 'config', 'store'), MD, (snap) => {
             synced('cfg', snap);
             if (snap.exists()) applyCfgDoc(snap.data());
@@ -681,13 +856,15 @@
   function init(app) {
     prefix = `lh.${app}.`;
     cfg = { ...cfg, ...store.get('cfg', {}) };
+    const mc = store.get('menu', null);
+    if (mc && typeof mc === 'object') applyMenu(mc);
     const ec = store.get('evcfg', null);
     if (ec && typeof ec === 'object') applyEvDoc(ec);
     window.addEventListener('online', flush);
   }
 
   window.LH = {
-    UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
+    UPI, MENU, ITEMS, HIDDEN, STATUS, NEXT, nextFor, statusLabel, priceAt, unit, applyMenu, getMenuDoc: () => menuDoc, validMove, moveEvent,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder, validateFeedback,
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,

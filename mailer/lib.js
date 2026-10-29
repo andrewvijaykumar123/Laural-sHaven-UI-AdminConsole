@@ -30,6 +30,7 @@ function toOrder(LH, id, d, tsMs) {
 /* ---------- Per-order sweep (idempotent; state lives in the mail/{id} documents) ---------- */
 async function sweep({ store, send, LH, now = Date.now(), maxSends = 60, log = console.log }) {
   const cfg = (await store.config()) || {};
+  if (store.menu) LH.applyMenu(await store.menu());
   const recent = await store.recentOrders(now - WINDOW_MS);
   const stats = { checked: 0, sent: 0, failed: 0, skipped: 0 };
   for (const raw of recent) {
@@ -103,8 +104,8 @@ function buildReport(LH, rows) {
   const qty = {}; const rev = {}; const cat = {};
   valid.forEach(({ o }) => o.it.forEach(([id, q]) => {
     const it = LH.ITEMS.get(id);
-    qty[it.name] = (qty[it.name] || 0) + q; rev[it.name] = (rev[it.name] || 0) + it.price * q;
-    const c = LH.MENU.find((m) => m.id === it.cat).name; cat[c] = (cat[c] || 0) + it.price * q;
+    qty[it.name] = (qty[it.name] || 0) + q; rev[it.name] = (rev[it.name] || 0) + LH.unit(o, id) * q;
+    const c = LH.MENU.find((m) => m.id === it.cat).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q;
   }));
   r.top = Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, q]) => [n, q, rev[n]]);
   r.cats = Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -159,6 +160,7 @@ ${r.open.length ? `${h('Not finished at close')}${table(r.open.map((x) => [x.o.i
 
 async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   const { start, end } = dayBounds(day);
+  if (store.menu) LH.applyMenu(await store.menu());
   const load = async (a, b) => {
     const raw = await store.ordersBetween(a, b);
     const rows = [];

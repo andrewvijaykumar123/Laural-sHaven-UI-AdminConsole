@@ -20,6 +20,7 @@ function connect() {
   const mapOrders = (snap) => snap.docs.map((d) => ({ id: d.id, data: d.data(), ts: ts(d.data()) })).filter((x) => x.ts);
   return {
     config: async () => { const s = await db.doc('config/store').get(); return s.exists ? s.data() : {}; },
+    menu: async () => { const s = await db.doc('config/menu').get(); return s.exists ? s.data() : null; },
     recentOrders: async (sinceMs) => mapOrders(await db.collection('orders').where('at', '>=', admin.firestore.Timestamp.fromMillis(sinceMs)).limit(1000).get()),
     ordersBetween: async (a, b) => mapOrders(await db.collection('orders').where('at', '>=', admin.firestore.Timestamp.fromMillis(a)).where('at', '<', admin.firestore.Timestamp.fromMillis(b)).limit(2000).get()),
     status: async (id) => { const s = await db.doc(`status/${id}`).get(); return s.exists ? s.data() : null; },

@@ -211,16 +211,29 @@
   LH.on('fbsync', ({ ok, code }) => { fbErr = ok ? '' : code; renderFbState(); });
   LH.on('event', (e) => {
     if (evk.has(e.id)) return;
+    const mv = (evMeta[e.id] || {}).mv;
+    if (mv) e = LH.moveEvent(e, mv);
     evk.set(e.id, e);
     saveEv();
     if (Date.now() - e.ts < 3 * 60 * 1000) { chime(); toast(`New event booking ${e.id} · ${e.n} · ${evDay(e.d)}`, 'new'); }
     scheduleRender();
   });
-  LH.on('evstatus', ({ id, s, r, ts }) => {
+  LH.on('evstatus', ({ id, s, r, ts, mv }) => {
     const m = evMeta[id] || (evMeta[id] = {});
     if (ts < (m.sts || 0)) return;
     m.s = s; m.r = r; m.sts = ts;
+    if (mv) {
+      m.mv = mv;
+      const e = evk.get(id);
+      if (e && (e.d !== mv.d || e.st !== mv.st || e.h !== mv.h)) { evk.set(id, LH.moveEvent(e, mv)); saveEv(); }
+    }
     saveEvMeta(); scheduleRender();
+  });
+  LH.on('menu', () => {
+    buildMenuAdmin();
+    if (!draftTimer) draft = readDraft();
+    renderConfig();
+    scheduleRender();
   });
   LH.on('evcfg', scheduleRender);
   LH.on('evsync', ({ ok, code }) => { evErr = ok ? '' : code; renderEvState(); });
@@ -482,7 +495,7 @@
 
   function printTicket(o) {
     $('#printArea').className = '';
-    const lines = o.it.map(([id, q]) => `${q} x ${esc(ITEMS.get(id).name)}  ${fmt(ITEMS.get(id).price * q)}`).join('<br>');
+    const lines = o.it.map(([id, q]) => `${q} x ${esc(ITEMS.get(id).name)}  ${fmt(LH.unit(o, id) * q)}`).join('<br>');
     $('#printArea').innerHTML = `<h3>Laural's Haven</h3><p>${esc(o.id)} · ${new Date(o.ts).toLocaleString()}</p><hr>${lines}<hr><b>TOTAL ${fmt(o.total)}</b><p>${esc(o.n)} · ${esc(o.p)}<br>${o.svc === 'take' ? 'TAKEAWAY' : o.svc === 'deliver' ? `DELIVERY<br>${esc(o.addr)}<br>${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km` : `DINE-IN ${esc(o.tbl)}`}<br>${o.pay === 'upi' ? 'UPI' : o.svc === 'deliver' ? 'CASH ON DELIVERY' : 'PAY AT COUNTER'}${o.nt ? `<br>NOTE: ${esc(o.nt)}` : ''}</p>`;
     window.print();
   }
@@ -864,7 +877,7 @@
     $('#hourChart').innerHTML = barChart(hours);
 
     const qty = {}; const cat = {};
-    valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + it.price * q; }));
+    valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q; }));
     $('#topItems').innerHTML = rank(Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8), (v) => `${v}×`);
     $('#catSplit').innerHTML = rank(Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8), fmt);
     const mix = {}; all.forEach((o) => { const l = LH.statusLabel(o, statusOf(o.id)); mix[l] = (mix[l] || 0) + 1; });
@@ -1014,10 +1027,10 @@
       const s = evStatusOf(e.id), st = EVS[s], t = LH.EVENT_TYPE.get(e.ty), m = evMeta[e.id] || {};
       const clash = s === 'pending' ? evConflict(e) : null;
       const btn = (act, label, cls) => `<button class="act ${cls}" data-evact="${act}" data-evid="${esc(e.id)}">${label}</button>`;
-      const acts = s === 'pending' ? btn('confirmed', 'Confirm', '') + btn('declined', 'Decline', 'bad')
-        : s === 'confirmed' ? btn('completed', 'Mark completed', '') + btn('cancelled', 'Cancel booking', 'bad') : '';
+      const acts = s === 'pending' ? btn('confirmed', 'Confirm', '') + btn('move', 'Reschedule', '') + btn('declined', 'Decline', 'bad')
+        : s === 'confirmed' ? btn('completed', 'Mark completed', '') + btn('move', 'Reschedule', '') + btn('cancelled', 'Cancel booking', 'bad') : '';
       return `<article class="fbcard evcard" data-ev="${esc(e.id)}">
-        <div class="fb-top"><span class="oid">${esc(e.id)}</span><span class="badge" style="background:${st.color}">${esc(st.label)}</span>${s === 'confirmed' && evPast(e) ? '<span class="chip warn">Past date</span>' : ''}${clash ? `<span class="chip warn">Overlaps ${esc(clash.id)}</span>` : ''}<span class="muted fb-date">requested ${ago(e.ts)}</span></div>
+        <div class="fb-top"><span class="oid">${esc(e.id)}</span><span class="badge" style="background:${st.color}">${esc(st.label)}</span>${s === 'confirmed' && evPast(e) ? '<span class="chip warn">Past date</span>' : ''}${clash ? `<span class="chip warn">Overlaps ${esc(clash.id)}</span>` : ''}${m.mv && m.mv.od ? `<span class="chip warn" data-moved>Rescheduled · was ${esc(evDay(m.mv.od))}, ${esc(LH.eventRange(m.mv.os, m.mv.oh))}</span>` : ''}<span class="muted fb-date">requested ${ago(e.ts)}</span></div>
         <div class="fb-who"><b>${t.icon} ${esc(t.label)}</b><span class="chip">${e.g} guest${e.g === 1 ? '' : 's'}</span></div>
         <p class="ev-when">📅 ${esc(evDay(e.d))} · ${esc(LH.eventRange(e.st, e.h))} <span class="muted">(${e.h} hour${e.h === 1 ? '' : 's'})</span></p>
         <div class="fb-who"><b>${esc(e.n)}</b><a href="tel:${esc(e.p)}">${esc(e.p)}</a></div>
@@ -1039,7 +1052,7 @@
       if (c) { toast(`Overlaps confirmed booking ${c.id} (${evDay(c.d)}, ${LH.eventRange(c.st, c.h)}). Decline or move one of them first.`, 'bad'); return; }
     }
     const prev = evMeta[id];
-    evMeta[id] = { s, r: reason, sts: Date.now() };
+    evMeta[id] = { s, r: reason, sts: Date.now(), ...(prev && prev.mv ? { mv: prev.mv } : {}) };
     saveEvMeta(); renderEvents(); renderEvBadge();
     try { await LH.publishAdmin({ k: 'evst', id, s, r: reason }); }
     catch (err) {
@@ -1061,12 +1074,136 @@
     };
   }
 
+  /* Moving a booking to another date or time (the customer asked the cafe to change it). */
+  function askMove(id) {
+    const e = evk.get(id);
+    const s = evStatusOf(id);
+    if (!e || !['pending', 'confirmed'].includes(s)) return;
+    const EV = LH.EVENT;
+    const f = { d: e.d, st: e.st, h: e.h };
+    const maxH = (st) => Math.min(EV.MAX_H, Math.floor((EV.CLOSE - st) / 60));
+    const starts = [];
+    for (let m = EV.OPEN; m <= EV.LAST_START; m += EV.STEP) starts.push(`<option value="${m}"${m === f.st ? ' selected' : ''}>${LH.clock(m)}</option>`);
+    const last = new Date(); last.setDate(last.getDate() + EV.DAYS);
+    openModal(`<h3>Reschedule ${esc(id)}</h3>
+      <p class="muted" style="margin-bottom:12px">${esc(e.n)} · now ${esc(evDay(e.d))}, ${esc(LH.eventRange(e.st, e.h))}</p>
+      <label class="muted" for="mvDate">New date</label><input class="pw-in" id="mvDate" type="date" min="${todayKey()}" max="${LH.dateKey(last)}" value="${esc(f.d)}">
+      <label class="muted" for="mvStart">Start time</label><select class="pw-in" id="mvStart">${starts.join('')}</select>
+      <label class="muted" for="mvHours">Duration</label><select class="pw-in" id="mvHours"></select>
+      <p id="mvNote" class="muted" role="status" style="margin:4px 0 12px"></p>
+      <div class="acts"><button class="btn primary" id="mvSave">Move booking</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    const sync = () => {
+      f.d = $('#mvDate').value;
+      f.st = Number($('#mvStart').value);
+      f.h = Math.min(f.h, maxH(f.st));
+      $('#mvHours').innerHTML = Array.from({ length: maxH(f.st) - EV.MIN_H + 1 }, (_, i) => EV.MIN_H + i).map((h) => `<option value="${h}"${h === f.h ? ' selected' : ''}>${h} hour${h === 1 ? '' : 's'}</option>`).join('');
+      const c = LH.validDateKey(f.d) && f.d >= todayKey() && LH.inEventWindow(f.d) ? evConflict({ id, ...f }) : null;
+      const problem = !LH.validDateKey(f.d) || f.d < todayKey() || !LH.inEventWindow(f.d) ? `Pick a date within the next ${EV.DAYS} days.`
+        : f.d === e.d && f.st === e.st && f.h === e.h ? 'Pick a different date or time.'
+          : c ? `Overlaps confirmed booking ${c.id} (${evDay(c.d)}, ${LH.eventRange(c.st, c.h)}). Pick another time.` : '';
+      $('#mvNote').textContent = problem || `New total ${fmt(LH.eventQuote(f.h, e.dec).total)}${f.h === e.h ? '' : ` (was ${fmt(e.total)})`}.`;
+      $('#mvSave').disabled = !!problem;
+    };
+    sync();
+    $('#mvDate').oninput = sync;
+    $('#mvStart').onchange = sync;
+    $('#mvHours').onchange = () => { f.h = Number($('#mvHours').value); sync(); };
+    $('#mvSave').onclick = () => { closeModal(); moveEv(id, { ...f }); };
+  }
+
+  async function moveEv(id, f) {
+    const e = evk.get(id);
+    if (!e || !['pending', 'confirmed'].includes(evStatusOf(id))) return;
+    if (!LH.getRelay().ops) { toast('Still connecting. Try again in a moment.', 'bad'); return; }
+    const s = evStatusOf(id);
+    const prevM = evMeta[id];
+    const was = prevM && prevM.mv && prevM.mv.od ? { od: prevM.mv.od, os: prevM.mv.os, oh: prevM.mv.oh } : { od: e.d, os: e.st, oh: e.h };
+    const mv = LH.validMove({ d: f.d, st: f.st, h: f.h, ...was });
+    if (!mv) { toast('That time is not valid.', 'bad'); return; }
+    if (s === 'confirmed' || s === 'pending') {
+      const c = evConflict({ id, d: mv.d, st: mv.st, h: mv.h });
+      if (c) { toast(`Overlaps confirmed booking ${c.id}. Pick another time.`, 'bad'); return; }
+    }
+    evk.set(id, LH.moveEvent(e, mv));
+    evMeta[id] = { ...(prevM || { s, r: '', sts: 0 }), mv };
+    saveEv(); saveEvMeta(); renderEvents();
+    try { await LH.publishAdmin({ k: 'evst', id, s, r: (prevM && prevM.r) || '', mv }); }
+    catch (err) {
+      evk.set(id, e);
+      if (prevM) evMeta[id] = prevM; else delete evMeta[id];
+      saveEv(); saveEvMeta(); renderEvents();
+      toast('Could not reschedule the booking.', 'bad');
+      return;
+    }
+    try { await publishEvCfg(evOn()); toast(`${id} moved to ${evDay(mv.d)}, ${LH.eventRange(mv.st, mv.h)}`, 'ok'); }
+    catch (err) { toast(`${id} moved, but the availability shown to customers could not be refreshed. Toggle Event bookings or try again.`, 'bad'); }
+  }
+
   /* ---------- Menu and store settings ---------- */
+  const menuCall = async (op, okMsg) => {
+    if (!LH.getRelay().ops) { toast('Still connecting. Try again in a moment.', 'bad'); return false; }
+    try { await LH.publishAdmin({ k: 'menu', op }); if (okMsg) toast(okMsg, 'ok'); return true; }
+    catch (err) { toast(err && !err.code && err.message ? err.message : 'Could not save the menu change.', 'bad'); return false; }
+  };
+  const catName = (id) => (MENU.find((c) => c.id === id) || {}).name || '';
+  const dietOptions = (cur) => [['v', 'Veg'], ['e', 'Egg'], ['n', 'Non-veg']].map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('');
+
+  function askItem(id) {
+    const it = ITEMS.get(id);
+    if (!it) return;
+    openModal(`<h3>${it.icon} ${esc(it.name)}</h3>
+      <label class="muted" for="miPrice">Price (₹)</label><input class="pw-in" id="miPrice" type="number" inputmode="numeric" min="1" max="9999" step="1" value="${it.price}">
+      ${it.custom ? `<label class="muted" for="miName">Name</label><input class="pw-in" id="miName" maxlength="50" value="${esc(it.name)}">
+      <label class="muted" for="miDiet">Type</label><select class="pw-in" id="miDiet">${dietOptions(it.diet)}</select>` : ''}
+      <p class="muted" style="margin:4px 0 12px">New orders use the new price. Orders already placed keep the price they were placed at.</p>
+      <div class="acts"><button class="btn primary" id="miSave">Save</button><button class="btn ghost" id="miHide">Hide from menu</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    $('#miSave').onclick = async () => {
+      const price = Math.floor(Number($('#miPrice').value));
+      const name = it.custom ? $('#miName').value : '';
+      const diet = it.custom ? $('#miDiet').value : '';
+      if (it.custom && (name.trim() !== it.name || diet !== it.diet)) { if (!(await menuCall({ op: 'edit', id, name, diet }))) return; }
+      if (price !== it.price && !(await menuCall({ op: 'price', id, price }))) return;
+      closeModal();
+      toast(`${ITEMS.get(id).name} saved`, 'ok');
+    };
+    $('#miHide').onclick = async () => { if (await menuCall({ op: 'hide', id, hide: true }, `${it.name} is hidden from customers`)) closeModal(); };
+  }
+
+  function askAddProduct(cat) {
+    openModal(`<h3>Add a product</h3>
+      <label class="muted" for="apName">Name</label><input class="pw-in" id="apName" maxlength="50" placeholder="e.g. Cold Coffee">
+      <label class="muted" for="apCat">Category</label><select class="pw-in" id="apCat">${MENU.map((c) => `<option value="${c.id}"${c.id === cat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <label class="muted" for="apPrice">Price (₹)</label><input class="pw-in" id="apPrice" type="number" inputmode="numeric" min="1" max="9999" step="1">
+      <label class="muted" for="apDiet">Type</label><select class="pw-in" id="apDiet">${dietOptions('v')}</select>
+      <label class="muted" for="apIcon">Emoji (optional)</label><input class="pw-in" id="apIcon" maxlength="8" placeholder="picked automatically if empty">
+      <div class="acts"><button class="btn primary" id="apSave">Add product</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    $('#apSave').onclick = async () => {
+      const name = $('#apName').value;
+      if (await menuCall({ op: 'add', name, cat: $('#apCat').value, price: Math.floor(Number($('#apPrice').value)), diet: $('#apDiet').value, icon: $('#apIcon').value }, `${LH.clean(name, 50)} added to the menu`)) closeModal();
+    };
+  }
+
+  function askAddCategory() {
+    openModal(`<h3>New category</h3>
+      <label class="muted" for="acName">Name</label><input class="pw-in" id="acName" maxlength="40" placeholder="e.g. Desserts">
+      <label class="muted" for="acIcon">Emoji (optional)</label><input class="pw-in" id="acIcon" maxlength="8" placeholder="🍰">
+      <label class="muted" for="acTag">Short tagline (optional)</label><input class="pw-in" id="acTag" maxlength="60" placeholder="e.g. Something sweet">
+      <p class="muted" style="margin:4px 0 12px">Customers see a category once it has at least one product.</p>
+      <div class="acts"><button class="btn primary" id="acSave">Create category</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    $('#acSave').onclick = async () => {
+      const name = $('#acName').value;
+      if (await menuCall({ op: 'addcat', name, icon: $('#acIcon').value, tagline: $('#acTag').value }, `${LH.clean(name, 40)} created`)) { closeModal(); askAddProduct(LH.slug(LH.clean(name, 40))); }
+    };
+  }
+
   function buildMenuAdmin() {
+    const hidden = LH.HIDDEN.length ? `<section class="mcat" data-cat="_hidden"><header><span style="font-size:1.5rem">🙈</span><h3>Hidden from customers</h3></header>
+      <div class="mgrid">${LH.HIDDEN.map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-show-item="${it.id}">Show</button></div>`).join('')}</div></section>` : '';
     $('#menuAdmin').innerHTML = MENU.map((c) => `<section class="mcat" data-cat="${c.id}"><header><span style="font-size:1.5rem">${c.icon}</span><h3>${esc(c.name)}</h3>
-      <button class="btn ghost sm" data-cat-out="${c.id}">Toggle all</button></header>
-      <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${fmt(it.price)}</small></div>
-        <label class="switch" title="Available"><input type="checkbox" data-item="${it.id}"><span class="track"></span></label></div>`).join('')}</div></section>`).join('');
+      <button class="btn ghost sm" data-add-in="${c.id}">+ Add product</button>${c.items.length ? `<button class="btn ghost sm" data-cat-out="${c.id}" style="margin-left:0">Toggle all</button>` : ''}</header>
+      <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${fmt(it.price)}${it.custom ? ' · added by you' : ''}</small></div>
+        <button class="btn ghost sm" data-edit-item="${it.id}" aria-label="Edit ${esc(it.name)}">Edit</button>
+        <label class="switch" title="Available"><input type="checkbox" data-item="${it.id}"><span class="track"></span></label></div>`).join('') || '<p class="muted">No products yet.</p>'}</div></section>`).join('') + hidden;
   }
 
   function renderConfig() {
@@ -1086,7 +1223,7 @@
   function filterMenuAdmin() {
     const q = $('#menuSearch').value.trim().toLowerCase();
     $$('.mitem').forEach((el) => { el.hidden = !!q && !ITEMS.get(el.dataset.id).name.toLowerCase().includes(q); });
-    $$('.mcat').forEach((s) => { s.hidden = !$$('.mitem:not([hidden])', s).length; });
+    $$('.mcat').forEach((s) => { s.hidden = !!q && !$$('.mitem:not([hidden])', s).length; });
   }
 
   function renderConn(info) {
@@ -1140,7 +1277,7 @@
       const b = e.target.closest('[data-evact]');
       if (!b) return;
       const act = b.dataset.evact;
-      if (act === 'declined' || act === 'cancelled') askEvReason(b.dataset.evid, act); else setEvStatus(b.dataset.evid, act);
+      if (act === 'declined' || act === 'cancelled') askEvReason(b.dataset.evid, act); else if (act === 'move') askMove(b.dataset.evid); else setEvStatus(b.dataset.evid, act);
     });
     const seg = (sel, set) => $(sel).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; $$('button', $(sel)).forEach((x) => x.classList.toggle('on', x === b)); set(b.dataset.v); });
     seg('#boardSvc', (v) => { boardSvc = v; renderBoard(); });
@@ -1166,6 +1303,12 @@
       renderConfig(); pushConfig();
     });
     $('#menuAdmin').addEventListener('click', (e) => {
+      const edit = e.target.closest('[data-edit-item]');
+      if (edit) { askItem(edit.dataset.editItem); return; }
+      const add = e.target.closest('[data-add-in]');
+      if (add) { askAddProduct(add.dataset.addIn); return; }
+      const show = e.target.closest('[data-show-item]');
+      if (show) { menuCall({ op: 'hide', id: show.dataset.showItem, hide: false }, 'Item is back on the menu'); return; }
       const b = e.target.closest('[data-cat-out]');
       if (!b) return;
       const ids = MENU.find((c) => c.id === b.dataset.catOut).items.map((i) => i.id);
@@ -1174,6 +1317,8 @@
       renderConfig(); pushConfig();
     });
     $('#restockAll').addEventListener('click', () => { draft.oos.clear(); renderConfig(); pushConfig(); });
+    $('#addProduct').addEventListener('click', () => askAddProduct(''));
+    $('#addCategory').addEventListener('click', askAddCategory);
 
     const toggleSound = () => { soundOn = !soundOn; store.set('sound', soundOn); if (soundOn) chime(); renderConfig(); };
     $('#soundBtn').addEventListener('click', toggleSound);

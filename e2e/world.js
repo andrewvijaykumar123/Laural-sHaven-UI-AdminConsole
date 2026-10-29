@@ -29,6 +29,8 @@ class Db {
   cfg() { return this.docs.get('config/store') || {}; }
 
   validOrder(d, id, uid) {
+    const menu = this.docs.get('config/menu');
+    if (menu) this.LH.applyMenu(menu);
     const it = (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; });
     const o = this.LH.validateOrder({ id: d.id, ts: Date.now(), n: d.n, p: d.p, em: d.em, nt: d.nt, pay: d.pay, svc: d.svc, tbl: d.tbl, addr: d.addr, lat: d.lat, lng: d.lng, otp: d.otp, it });
     if (!o || d.id !== id || d.uid !== uid || !d.at || !d.at.__serverTs || o.total !== d.total) return false;
