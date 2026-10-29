@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261029g">
+  <link rel="stylesheet" href="styles.css?v=20261029h">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -35,6 +35,7 @@
       <nav id="nav">
         <button data-tab="orders" class="on"><i>📋</i><span>Live orders</span><em id="navCount" hidden>0</em></button>
         <button data-tab="deliveries" id="navDelBtn"><i>🛵</i><span>Deliveries</span><em id="navDel" hidden>0</em></button>
+        <button data-tab="events"><i>🎉</i><span>Events</span><em id="navEv" hidden>0</em></button>
         <button data-tab="analytics"><i>📊</i><span>Analytics</span></button>
         <button data-tab="menu"><i>🍽️</i><span>Menu &amp; stock</span></button>
         <button data-tab="history"><i>🗂️</i><span>Order history</span></button>
@@ -129,6 +130,17 @@
           <select id="fbShow" aria-label="Show"><option value="">All feedback</option><option value="comments">With comments</option></select></div>
         <div class="fb-list" id="fbList"></div>
       </section>
+      <section class="tab" id="tab-events">
+        <div class="fb-state" id="evState" role="status" hidden></div>
+        <div class="panel cfg-panel">
+          <div class="cfg-row"><div><h3>Event bookings</h3><p>Let customers request the cafe for birthdays, anniversaries, meetups and more: ₹1,000 per hour, ₹500 post-event cleaning and an optional ₹500 basic decoration, paid at the cafe. Confirming a booking blocks that time for other customers. Turn on only after the updated Firestore rules are published.</p></div>
+            <label class="switch big"><input type="checkbox" id="evToggle"><span class="track"></span><span class="lbl" id="evLbl">Off</span></label></div>
+        </div>
+        <div class="kpis" id="evKpis"></div>
+        <div class="toolbar"><label class="search"><span>🔍</span><input id="evSearch" placeholder="Search by booking ID, name, phone or event type..." type="search"></label>
+          <select id="evFilter" aria-label="Filter bookings"><option value="active">Needs action and confirmed</option><option value="closed">Completed, declined and cancelled</option><option value="all">All bookings</option></select></div>
+        <div class="fb-list" id="evList"></div>
+      </section>
       <section class="tab" id="tab-settings">
         <div class="panels">
           <div class="panel"><h3>Alerts</h3>
@@ -157,9 +169,9 @@
 
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
-  <script src="core.js?v=20261029g"></script>
-  <script src="map.js?v=20261029g"></script>
-  <script src="mailtpl.js?v=20261029g"></script>
-  <script src="app.js?v=20261029g"></script>
+  <script src="core.js?v=20261029h"></script>
+  <script src="map.js?v=20261029h"></script>
+  <script src="mailtpl.js?v=20261029h"></script>
+  <script src="app.js?v=20261029h"></script>
 </body>
 </html>

@@ -225,9 +225,74 @@
     return { id: f.id, ts, n: clean(f.n, 40), svc: f.svc === 'take' ? 'take' : f.svc === 'deliver' ? 'deliver' : 'dine', sr, ir, c: clean(f.c, 300) };
   }
 
+  /* ---------- Event bookings (parties, celebrations, meetups): Rs 1000 per hour + Rs 500 cleaning + optional Rs 500 basic decoration ---------- */
+  // Times are minutes after midnight. The rules in firestore.rules repeat these limits and prices.
+  const EVENT = { RATE: 1000, CLEAN: 500, DECOR: 500, MIN_H: 1, MAX_H: 12, OPEN: 480, LAST_START: 1380, CLOSE: 1440, STEP: 30, MAX_GUESTS: 100, DAYS: 180 };
+  const EVENT_TYPES = [
+    { id: 'bday', label: 'Birthday Party', icon: '🎂' },
+    { id: 'anniv', label: 'Anniversary Celebration', icon: '💞' },
+    { id: 'success', label: 'Success Meetup', icon: '🏆' },
+    { id: 'together', label: 'Get-together / Reunion', icon: '🥂' },
+    { id: 'shower', label: 'Baby Shower', icon: '🍼' },
+    { id: 'corp', label: 'Corporate Meeting', icon: '💼' },
+    { id: 'other', label: 'Other Celebration', icon: '🎉' }
+  ];
+  const EVENT_TYPE = new Map(EVENT_TYPES.map((t) => [t.id, t]));
+  const EVENT_STATUS = {
+    pending: { label: 'Awaiting confirmation', short: 'Pending', color: '#f59e0b' },
+    confirmed: { label: 'Confirmed', short: 'Confirmed', color: '#22c55e' },
+    declined: { label: 'Declined', short: 'Declined', color: '#ef4444' },
+    cancelled: { label: 'Cancelled', short: 'Cancelled', color: '#9ca3af' },
+    completed: { label: 'Completed', short: 'Done', color: '#3b82f6' }
+  };
+  const EVENT_NEXT = { pending: ['confirmed', 'declined'], confirmed: ['completed', 'cancelled'], declined: [], cancelled: [], completed: [] };
+  const newEventId = () => `EV-${randomString(6)}`;
+  const validEventId = (id) => typeof id === 'string' && /^EV-[A-Z0-9]{6,10}$/.test(id);
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const dateKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const parseDateKey = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d); };
+  const validDateKey = (s) => typeof s === 'string' && /^20\d\d-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(s) && dateKey(parseDateKey(s)) === s;
+  // Today up to EVENT.DAYS ahead.
+  const inEventWindow = (s) => {
+    if (!validDateKey(s)) return false;
+    const t = new Date(now()); t.setHours(0, 0, 0, 0);
+    const days = Math.round((parseDateKey(s) - t) / 86400000);
+    return days >= 0 && days <= EVENT.DAYS;
+  };
+  const clock = (min) => { const h = Math.floor(min / 60) % 24; return `${h % 12 || 12}:${pad2(min % 60)} ${h < 12 ? 'AM' : 'PM'}`; };
+  const eventRange = (st, h) => `${clock(st)} - ${clock(st + 60 * h)}`;
+  const eventQuote = (hours, decor) => {
+    const h = Math.floor(Number(hours)) || 0;
+    const rent = EVENT.RATE * h, dec = decor ? EVENT.DECOR : 0;
+    return { hours: h, rent, clean: EVENT.CLEAN, decor: dec, total: rent + EVENT.CLEAN + dec };
+  };
+  const slotStr = (a, b) => `${a}-${b}`;
+  const parseSlot = (s) => {
+    const m = /^(\d{1,4})-(\d{1,4})$/.exec(String(s));
+    const a = m ? Number(m[1]) : 0, b = m ? Number(m[2]) : 0;
+    return m && a < b && b <= EVENT.CLOSE ? [a, b] : null;
+  };
+  const slotsClash = (st, h, slots) => (slots || []).find(([a, b]) => st < b && a < st + 60 * h) || null;
+
+  function validateEvent(e) {
+    if (!e || !validEventId(e.id)) return null;
+    const name = clean(e.n, 40);
+    const phone = String(e.p ?? '').replace(/[^\d+]/g, '').slice(0, 15);
+    const h = Math.floor(Number(e.h)), st = Math.floor(Number(e.st)), g = Math.floor(Number(e.g));
+    if (!name || phone.replace(/\D/g, '').length < 10 || !EVENT_TYPE.has(e.ty) || !validDateKey(e.d)) return null;
+    if (!(h >= EVENT.MIN_H && h <= EVENT.MAX_H) || !(g >= 1 && g <= EVENT.MAX_GUESTS)) return null;
+    if (!(st >= EVENT.OPEN && st <= EVENT.LAST_START && st % EVENT.STEP === 0 && st + 60 * h <= EVENT.CLOSE)) return null;
+    let ts = Number(e.ts);
+    if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
+    const dec = e.dec === true;
+    return { id: e.id, ts, n: name, p: phone, ty: e.ty, g, d: e.d, st, h, dec, nt: clean(e.nt, 200), total: eventQuote(h, dec).total };
+  }
+
   /* ---------- Config shared by the admin (store open, sold-out items, prep time) ---------- */
   let cfg = { open: true, oos: [], prep: 12, note: '', del: false, ts: 0 };
   let lastClr = 0;
+  // Event bookings: the admin switches them on and publishes the time slots already taken (busy[date] = [[from, to], ...]).
+  let evCfg = { on: false, busy: {}, ts: 0 };
 
   /* ---------- Firebase ---------- */
   const relayState = { orders: false, ops: false };
@@ -326,6 +391,20 @@
     return v;
   }
 
+  const toEventDoc = (e) => ({ id: e.id, n: e.n, p: e.p, ty: e.ty, g: e.g, d: e.d, st: e.st, h: e.h, dec: e.dec, total: e.total, ...(e.nt ? { nt: e.nt } : {}) });
+  const fromEventDoc = (d) => validateEvent({ ...d, ts: d.at && d.at.toMillis ? d.at.toMillis() : now() });
+
+  // A booking is only a request until the admin confirms it. The rules check the price and the shape; the admin console checks clashes.
+  async function publishEvent(draft) {
+    const ev = validateEvent({ ...draft, id: draft.id || newEventId(), ts: now() });
+    if (!ev || !inEventWindow(ev.d)) throw new Error('Invalid event booking');
+    const user = await ensureUser();
+    const { db } = firebase();
+    const FB = window.LH_FB;
+    await write(FB.setDoc(FB.doc(db, 'events', ev.id), { ...toEventDoc(ev), uid: user.uid, at: FB.serverTimestamp() }));
+    return ev;
+  }
+
   const finalStatus = new Map();
   async function clearBoard(ts) {
     const FB = window.LH_FB;
@@ -392,6 +471,19 @@
       const snap = await FB.getDocs(FB.query(FB.collection(db, 'mailq'), FB.where('o', '==', f.id)));
       return snap.docs.map((d) => d.data().k);
     }
+    if (f.k === 'evst') {
+      if (!validEventId(f.id) || !EVENT_STATUS[f.s]) throw new Error('Invalid event status');
+      return write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts }, { merge: true }));
+    }
+    if (f.k === 'evcfg') {
+      // Written whole (no merge) so dates that are no longer busy disappear.
+      const busy = {};
+      Object.entries(f.busy || {}).filter(([k]) => validDateKey(k)).slice(0, 400).forEach(([k, arr]) => {
+        const a = (Array.isArray(arr) ? arr : []).filter((s) => parseSlot(s)).slice(0, 20);
+        if (a.length) busy[k] = a;
+      });
+      return write(FB.setDoc(FB.doc(db, 'config', 'events'), { on: f.on === true, busy, ts }));
+    }
     if (f.k === 'clr') return clearBoard(ts);
     throw new Error('Unknown action');
   }
@@ -407,6 +499,25 @@
     };
     store.set('cfg', cfg);
     emit('cfg', cfg);
+  }
+
+  function applyEvDoc(d) {
+    const ts = Number(d.ts) || 0;
+    if (ts < evCfg.ts) return;
+    const busy = {}, wire = {};
+    if (d.busy && typeof d.busy === 'object') {
+      Object.keys(d.busy).filter(validDateKey).slice(0, 400).forEach((k) => {
+        const strs = (Array.isArray(d.busy[k]) ? d.busy[k] : []).filter((s) => parseSlot(s)).slice(0, 20);
+        if (strs.length) { wire[k] = strs; busy[k] = strs.map(parseSlot); }
+      });
+    }
+    evCfg = { on: d.on === true, busy, ts };
+    store.set('evcfg', { on: evCfg.on, busy: wire, ts });
+    emit('evcfg', evCfg);
+  }
+
+  function emitEvStatus(id, d) {
+    if (typeof d.s === 'string' && EVENT_STATUS[d.s]) emit('evstatus', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0 });
   }
 
   const lastStatus = new Map();
@@ -442,6 +553,7 @@
       mark(k, false);
       console.warn(`LH ${name} stream`, e && e.code ? e.code : e);
       if (name === 'feedback') emit('fbsync', { ok: false, code: e && e.code ? e.code : 'error' });
+      if (name === 'events') emit('evsync', { ok: false, code: e && e.code ? e.code : 'error' });
       if (timer) return;
       timer = setTimeout(() => { timer = null; offs.splice(0).forEach((f) => { try { f(); } catch (x) { /* already closed */ } }); attach(); }, delay);
       delay = Math.min(delay * 2, 60000);
@@ -451,11 +563,34 @@
       try {
         const FB = window.LH_FB;
         if (name === 'ops') {
-          mark('cfg', false);
+          mark('cfg', false); mark('ev', false);
           offs.push(FB.onSnapshot(FB.doc(firebase().db, 'config', 'store'), MD, (snap) => {
             synced('cfg', snap);
             if (snap.exists()) applyCfgDoc(snap.data());
           }, (e) => retry('cfg', e)));
+          offs.push(FB.onSnapshot(FB.doc(firebase().db, 'config', 'events'), MD, (snap) => {
+            synced('ev', snap);
+            if (snap.exists()) applyEvDoc(snap.data());
+          }, (e) => retry('ev', e)));
+          return;
+        }
+        if (name === 'events') {
+          if (!(await adminUser())) throw new Error('Console is locked');
+          const { db } = firebase();
+          mark('events', false); mark('evs', false);
+          offs.push(FB.onSnapshot(FB.query(FB.collection(db, 'events'), FB.orderBy('at', 'desc'), FB.limit(500)), MD, (snap) => {
+            synced('events', snap);
+            if (!snap.metadata.fromCache) emit('evsync', { ok: true });
+            snap.docChanges().forEach((ch) => {
+              if (ch.type === 'removed') return;
+              const e = fromEventDoc({ ...ch.doc.data({ serverTimestamps: 'estimate' }), id: ch.doc.id });
+              if (e) emit('event', e);
+            });
+          }, (e) => retry('events', e)));
+          offs.push(FB.onSnapshot(FB.query(FB.collection(db, 'evstatus'), FB.orderBy('u', 'desc'), FB.limit(500)), MD, (snap) => {
+            synced('evs', snap);
+            snap.docChanges().forEach((ch) => { if (ch.type !== 'removed') emitEvStatus(ch.doc.id, ch.doc.data()); });
+          }, (e) => retry('evs', e)));
           return;
         }
         if (name === 'feedback') {
@@ -487,26 +622,30 @@
           synced('status', snap);
           snap.docChanges().forEach((ch) => { if (ch.type !== 'removed') emitStatus(ch.doc.id, ch.doc.data()); });
         }, (e) => retry('status', e)));
-      } catch (e) { retry(name === 'ops' ? 'cfg' : name === 'feedback' ? 'fb' : 'orders', e); }
+      } catch (e) { retry(name === 'ops' ? 'cfg' : name === 'feedback' ? 'fb' : name === 'events' ? 'events' : 'orders', e); }
     }
     attach();
   }
 
   /* Customers follow the status of their own orders by id (readable by id only, never listable). */
-  const watchers = new Map();
-  function watch(ids) {
-    const wanted = new Set((ids || []).filter(validId).slice(0, 20));
-    watchers.forEach((off, id) => { if (!wanted.has(id)) { off(); watchers.delete(id); } });
-    wanted.forEach((id) => {
-      if (watchers.has(id)) return;
-      watchers.set(id, () => {});
-      ensureUser().then(() => {
-        if (!watchers.has(id)) return;
-        const FB = window.LH_FB;
-        watchers.set(id, FB.onSnapshot(FB.doc(firebase().db, 'status', id), (snap) => { if (snap.exists()) emitStatus(id, snap.data()); }, () => {}));
-      }).catch(() => watchers.delete(id));
-    });
+  function makeWatcher(col, valid, emitDoc) {
+    const watchers = new Map();
+    return (ids) => {
+      const wanted = new Set((ids || []).filter(valid).slice(0, 20));
+      watchers.forEach((off, id) => { if (!wanted.has(id)) { off(); watchers.delete(id); } });
+      wanted.forEach((id) => {
+        if (watchers.has(id)) return;
+        watchers.set(id, () => {});
+        ensureUser().then(() => {
+          if (!watchers.has(id)) return;
+          const FB = window.LH_FB;
+          watchers.set(id, FB.onSnapshot(FB.doc(firebase().db, col, id), (snap) => { if (snap.exists()) emitDoc(id, snap.data()); }, () => {}));
+        }).catch(() => watchers.delete(id));
+      });
+    };
   }
+  const watch = makeWatcher('status', validId, emitStatus);
+  const watchEv = makeWatcher('evstatus', validEventId, emitEvStatus);
 
   async function flush() {
     try {
@@ -521,6 +660,8 @@
   function init(app) {
     prefix = `lh.${app}.`;
     cfg = { ...cfg, ...store.get('cfg', {}) };
+    const ec = store.get('evcfg', null);
+    if (ec && typeof ec === 'object') applyEvDoc(ec);
     window.addEventListener('online', flush);
   }
 
@@ -528,9 +669,12 @@
     UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder, validateFeedback,
-    store, now, on, emit, init, connect, watch, flush,
-    publishOrder, publishFeedback, publishAdmin, admin: adminAuth,
+    EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,
+    dateKey, parseDateKey, validDateKey, clock, eventRange, slotStr, parseSlot, slotsClash,
+    store, now, on, emit, init, connect, watch, watchEv, flush,
+    publishOrder, publishFeedback, publishEvent, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
+    getEvCfg: () => evCfg,
     getRelay: () => ({ ...relayState, queued: inflight })
   };
 })();

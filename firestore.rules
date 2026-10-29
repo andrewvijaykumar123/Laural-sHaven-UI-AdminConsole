@@ -100,6 +100,47 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Event bookings (parties, celebrations, meetups): open only while the admin has switched them on (config/events.on).
+    // Rs 1000 per hour + Rs 500 post-event cleaning + optional Rs 500 basic decoration; start 8:00 AM to 11:00 PM in 30-minute steps,
+    // 1 to 12 hours, ending by midnight. Times are minutes after midnight. A booking is only a request until the admin confirms it
+    // (the admin console blocks overlapping confirmations), so rules do not need to check for clashes.
+    function eventsOn() {
+      let path = /databases/$(database)/documents/config/events;
+      return exists(path) && get(path).data.get('on', false) == true;
+    }
+
+    function validEvent(d, id) {
+      return d.keys().hasOnly(['id', 'uid', 'at', 'n', 'p', 'ty', 'g', 'd', 'st', 'h', 'dec', 'nt', 'total'])
+        && d.keys().hasAll(['id', 'uid', 'at', 'n', 'p', 'ty', 'g', 'd', 'st', 'h', 'dec', 'total'])
+        && d.id == id
+        && d.uid == request.auth.uid
+        && d.at == request.time
+        && d.n is string && d.n.size() > 0 && d.n.size() <= 40 && !d.n.matches('.*[<>].*')
+        && d.p is string && d.p.matches('^[+0-9]{10,16}$')
+        && d.ty in ['bday', 'anniv', 'success', 'together', 'shower', 'corp', 'other']
+        && d.g is int && d.g >= 1 && d.g <= 100
+        && d.d is string && d.d.matches('^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && d.st is int && d.st >= 480 && d.st <= 1380 && d.st % 30 == 0
+        && d.h is int && d.h >= 1 && d.h <= 12 && d.st + 60 * d.h <= 1440
+        && d.dec is bool
+        && d.total is int && d.total == 1000 * d.h + 500 + (d.dec ? 500 : 0)
+        && (!('nt' in d) || (d.nt is string && d.nt.size() <= 200 && !d.nt.matches('.*[<>].*')));
+    }
+
+    // Private: only the admin can read bookings. Customers can only create them.
+    match /events/{id} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && eventsOn() && id.matches('EV-[A-Z0-9]{6,10}') && validEvent(request.resource.data, id);
+      allow update, delete: if isAdmin();
+    }
+
+    // Booking status, readable by id only (no listing), like status/{id} for orders.
+    match /evstatus/{id} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
     // Readable by id only (no listing): lets a customer follow their order without exposing personal data.
     match /status/{id} {
       allow get: if signedIn();

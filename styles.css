@@ -304,3 +304,7 @@ select{height:2.875rem}
 .fb-chip{font-size:.78rem;padding:0.1875rem 0.625rem;border-radius:6.1875rem;background:var(--card2)}
 .fb-chip b{color:var(--amber)}.fb-chip.low b{color:var(--red)}
 .fb-rank{max-height:20rem;overflow:auto;padding-right:0.25rem}
+.evcard .ev-when{font-weight:600}
+.evcard .ev-price{font-size:.88rem}
+.evcard .ev-price b{color:var(--accent)}
+.evcard .fb-who a{color:var(--accent);font-weight:700}

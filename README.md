@@ -31,6 +31,17 @@ Every order that was not rejected has a professional invoice for Laural's Haven 
 Once an order is completed, the customer sees **Rate your order** in My orders on the storefront: 1 to 5 stars for the service, optional stars for each product they ordered, and an optional comment (300 characters). The **Feedback** tab shows the average service and product ratings, how the service ratings are spread, every product ranked by average stars, and each response with the order, customer, comment and product ratings. Filter by rating, service type or comments, or search by order ID, name, phone or comment. Ratings of 1 or 2 stars are flagged as needing attention, and new feedback shows a badge and a toast.
 
 Feedback is stored in `feedback/{orderId}` (one per order, created once by the customer who placed it, only after the order is completed; only the admin can read it). Republish `firestore.rules` for it to work; until then the customer sees a "could not save" message and the Feedback tab shows a note. Feedback is kept when you clear the board, but a customer can no longer rate an order once it has been cleared.
+
+## Event bookings
+
+Customers can request the cafe for birthday parties, anniversary celebrations, success meetups, get-togethers, baby showers, corporate meetings and other celebrations. Pricing: **Rs 1000 per hour + Rs 500 post-event cleaning + optional Rs 500 basic decoration**, paid at the cafe on the day. A booking is 1 to 12 hours, starts between 8:00 AM and 11:00 PM in 30-minute steps, ends by midnight, for 1 to 100 guests, from today up to 180 days ahead.
+
+The **Events** tab has the on/off switch (**off by default**; the storefront shows the Events buttons only while it is on), a summary, and every request with Confirm / Decline, then Mark completed / Cancel booking. Declines and cancellations take a reason that the customer sees. New requests show a badge on the tab. Confirming is blocked when it overlaps another confirmed booking; confirmed slots are published to the storefront so customers cannot pick a taken time.
+
+Data: `events/{EV-id}` (created by the customer while bookings are on; the rules recompute the price), `evstatus/{EV-id}` (admin only writes) and `config/events` (switch and taken slots). Republish `firestore.rules` for it to work; until then customers see "not available" and the Events tab shows a note.
+
+Limits: no emails are sent for events, customers cannot cancel online (they are shown the cafe phone number), overlaps are enforced only when you confirm, and opening hours are assumed to be 8:00 AM to midnight (edit `EVENT` in `core.js` in both repos, plus the matching numbers in `firestore.rules`, to change this).
+
 ## Instant order emails
 
 Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through Gmail SMTP. If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.

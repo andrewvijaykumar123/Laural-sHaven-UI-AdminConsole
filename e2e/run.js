@@ -555,6 +555,168 @@ async function until(fn, ms = 8000, step = 60) {
     await A.page.click('#nav [data-tab="orders"]');
   });
 
+  /* ---------------- Event bookings ---------------- */
+  await scenario('events: booking, confirmation, clash protection and live availability', async () => {
+    const dayKey = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return LH.dateKey(d); };
+    const D1 = dayKey(5); const D2 = dayKey(6);
+    const evCount = () => [...db.docs.keys()].filter((k) => k.startsWith('events/')).length;
+    const evStatus = (id) => (db.docs.get(`evstatus/${id}`) || {}).s;
+    const busyOf = (d) => ((db.docs.get('config/events') || {}).busy || {})[d];
+    const bookTry = (h, ev) => h.page.evaluate((x) => window.LH.publishEvent(x).then(() => 'sent', (e) => e.code || e.message), ev);
+    const localStatus = (h, id) => h.page.evaluate((x) => { const e = window.__lh.events.find((y) => y.id === x); return e && e.status; }, id);
+    const openBook = async (h) => { await h.page.click('#eventsBtn'); await h.page.click('#eventsBody [data-evv="book"]'); await h.page.waitForSelector('#evForm'); };
+    const fillEv = async (h, o) => {
+      const p = h.page;
+      await p.selectOption('#evType', o.ty || 'bday');
+      await p.fill('#evDate', o.d);
+      await p.selectOption('#evStart', String(o.st));
+      await p.selectOption('#evHours', String(o.h));
+      await p.fill('#evGuests', String(o.g || 10));
+      await p.fill('#evName', o.n ?? 'Meera');
+      await p.fill('#evPhone', o.p ?? '9876501234');
+      await p.fill('#evNote', o.nt || '');
+      await p.setChecked('#evDecor', !!o.dec);
+    };
+    const send = async (h) => { await h.page.click('#evSend'); await h.page.waitForSelector('#modal:not([hidden]) #modalCard .oid', { timeout: 8000 }); return (await h.page.textContent('#modalCard .oid')).trim(); };
+    const evCard = (id) => A.page.locator(`.evcard[data-ev="${id}"]`);
+
+    const s = await newShop();
+    check('event buttons are hidden while bookings are off', (await s.page.isHidden('#eventsBtn')) && (await s.page.isHidden('#heroEvents')));
+    const early = await bookTry(s, { ty: 'bday', d: D1, st: 1080, h: 3, g: 20, dec: true, n: 'Meera', p: '9876501234' });
+    check('rules refuse bookings while Events are off', early === 'permission-denied' && evCount() === 0, String(early));
+
+    await A.page.click('#nav [data-tab="events"]');
+    check('admin Events tab starts with bookings off', (await A.page.textContent('#evLbl')).trim() === 'Off');
+    await setSwitch(A, '#evToggle', true);
+    check('turning bookings on is published', !!(await until(() => (db.docs.get('config/events') || {}).on === true)));
+    check('storefront shows the event buttons live', !!(await until(async () => (await s.page.isVisible('#eventsBtn')) && (await s.page.isVisible('#heroEvents')))));
+
+    await openBook(s);
+    check('booking form lists the event types', (await s.page.locator('#evType option').count()) === LH.EVENT_TYPES.length);
+    check('default price is hours plus cleaning', (await s.page.textContent('#evTotal')).trim() === fmt(3500), await s.page.textContent('#evTotal'));
+    await s.page.setChecked('#evDecor', true);
+    check('basic decoration adds Rs 500', (await s.page.textContent('#evTotal')).trim() === fmt(4000) && /cleaning/i.test(await s.page.textContent('#evQuote')) && /decoration/i.test(await s.page.textContent('#evQuote')));
+    await s.page.selectOption('#evStart', '1380');
+    check('duration is limited so the event ends by midnight', (await s.page.locator('#evHours option').count()) === 1);
+    await s.page.selectOption('#evStart', '1080');
+    await s.page.selectOption('#evHours', '5');
+    check('price follows the duration', (await s.page.textContent('#evTotal')).trim() === fmt(6000));
+
+    await fillEv(s, { d: D1, st: 1080, h: 3, g: 20, dec: true, n: '', p: '12', nt: 'Cake at 7 <b>pm</b>' });
+    await s.page.click('#evSend');
+    check('name and phone are validated', (await s.page.locator('#fEvName.err').count()) === 1 && (await s.page.locator('#fEvPhone.err').count()) === 1 && evCount() === 0);
+    await s.page.fill('#evName', 'Meera'); await s.page.fill('#evPhone', '9876501234');
+    await s.page.fill('#evDate', dayKey(400));
+    await s.page.click('#evSend');
+    check('a date too far ahead is refused', (await s.page.locator('#fEvDate.err').count()) === 1 && evCount() === 0);
+    await s.page.fill('#evGuests', '500'); await s.page.fill('#evDate', D1);
+    await s.page.click('#evSend');
+    check('guest count is limited', (await s.page.locator('#fEvGuests.err').count()) === 1 && evCount() === 0);
+    await s.page.fill('#evGuests', '20');
+    const id1 = await send(s);
+    const d1 = db.docs.get(`events/${id1}`);
+    check('booking is stored with the right price and slot', !!d1 && d1.total === 4000 && d1.h === 3 && d1.st === 1080 && d1.d === D1 && d1.dec === true && d1.ty === 'bday' && d1.g === 20 && d1.n === 'Meera', JSON.stringify(d1));
+    check('note is stored without markup', !!d1 && !/[<>]/.test(d1.nt || '') && /Cake at 7/.test(d1.nt || ''));
+    check('new booking starts as pending', evStatus(id1) === undefined && (await localStatus(s, id1)) === 'pending');
+    await closeModal(s);
+    await s.page.click('#eventsBtn');
+    check('My bookings lists the request', /Awaiting confirmation/.test(await s.page.textContent(`.ev-card[data-ev="${id1}"]`)));
+    await s.page.click('#eventsDrawer [data-close]');
+
+    await A.page.waitForSelector('#navEv:not([hidden])');
+    check('admin nav shows one booking to handle', (await A.page.textContent('#navEv')).trim() === '1');
+    await evCard(id1).waitFor();
+    const ct = await evCard(id1).textContent();
+    check('admin sees customer, slot, extras and total', ct.includes('Meera') && ct.includes('9876501234') && ct.includes('Birthday Party') && ct.includes('6:00 PM - 9:00 PM') && ct.includes('20 guests') && ct.includes(fmt(4000)));
+    await evCard(id1).locator('[data-evact="confirmed"]').click();
+    check('confirming is published', !!(await until(() => evStatus(id1) === 'confirmed')));
+    check('confirmed slot is published for other customers', !!(await until(() => (busyOf(D1) || []).includes('1080-1260'))), JSON.stringify(busyOf(D1)));
+    check('customer sees the booking confirmed live', !!(await until(async () => (await localStatus(s, id1)) === 'confirmed')));
+    check('admin badge clears after confirming', await A.page.isHidden('#navEv'));
+
+    const s2 = await newShop();
+    await openBook(s2);
+    await fillEv(s2, { d: D1, st: 1140, h: 2 });
+    check('overlapping time is flagged and cannot be sent', !!(await until(() => s2.page.locator('#evAvail .ev-bad').count())) && (await s2.page.isDisabled('#evSend')));
+    await s2.page.selectOption('#evStart', '1260');
+    check('a free time after the booking is accepted', !!(await until(() => s2.page.locator('#evAvail .ev-ok').count())) && !(await s2.page.isDisabled('#evSend')) && /6:00 PM - 9:00 PM/.test(await s2.page.textContent('#evAvail')));
+    await s2.page.selectOption('#evStart', '1140');
+
+    const clashId = LH.newEventId();
+    const clashRes = await bookTry(s, { id: clashId, ty: 'anniv', d: D1, st: 1140, h: 2, g: 8, dec: false, n: 'Karan', p: '9123456780' });
+    check('an overlapping request can still be sent', clashRes === 'sent' && db.docs.has(`events/${clashId}`));
+    await evCard(clashId).waitFor();
+    check('admin sees which booking it overlaps', (await evCard(clashId).textContent()).includes(`Overlaps ${id1}`));
+    await evCard(clashId).locator('[data-evact="confirmed"]').click();
+    check('confirming an overlapping booking is blocked', !!(await until(async () => /Overlaps confirmed booking/.test(await A.page.textContent('#toasts')))) && evStatus(clashId) === undefined);
+    await evCard(clashId).locator('[data-evact="declined"]').click();
+    await A.page.click('#modalCard [data-evreason]');
+    check('declining records the reason', !!(await until(() => evStatus(clashId) === 'declined' && (db.docs.get(`evstatus/${clashId}`).r || '').length > 0)));
+
+    await fillEv(s2, { d: D2, st: 600, h: 2, g: 6, ty: 'success', n: 'Divya', p: '9000011111' });
+    const id2 = await send(s2);
+    check('a second customer books another day', db.docs.get(`events/${id2}`).total === 2500 && db.docs.get(`events/${id2}`).ty === 'success');
+    await closeModal(s2);
+    await evCard(id2).waitFor();
+    await evCard(id2).locator('[data-evact="confirmed"]').click();
+    await until(() => evStatus(id2) === 'confirmed');
+    await evCard(id2).locator('[data-evact="completed"]').click();
+    check('marking completed is published', !!(await until(() => evStatus(id2) === 'completed')));
+    check('a completed event frees the shared slot', !!(await until(() => !busyOf(D2))));
+    check('customer sees Completed live', !!(await until(async () => (await localStatus(s2, id2)) === 'completed')));
+
+    await evCard(id1).locator('[data-evact="cancelled"]').click();
+    await A.page.click('#modalCard [data-evreason]');
+    check('cancelling a confirmed booking is published', !!(await until(() => evStatus(id1) === 'cancelled')));
+    check('cancelled slot is released for everyone', !!(await until(() => !busyOf(D1))));
+    check('customer sees Cancelled with the reason', !!(await until(async () => (await localStatus(s, id1)) === 'cancelled')) && !!(await until(async () => { await s.page.click('#eventsBtn'); const t = await s.page.textContent(`.ev-card[data-ev="${id1}"]`); await s.page.click('#eventsDrawer [data-close]'); return /cancelled/i.test(t) && /at the customer/.test(t); })));
+    await openBook(s2);
+    await fillEv(s2, { d: D1, st: 1140, h: 2 });
+    check('availability updates live for a customer already on the form', !!(await until(async () => (await s2.page.locator('#evAvail .ev-bad').count()) === 0 && !(await s2.page.isDisabled('#evSend')))));
+    await s2.page.click('#eventsDrawer [data-close]');
+
+    const s3 = await newShop();
+    await openBook(s3);
+    await fillEv(s3, { d: D2, st: 990, h: 2 });
+    db.noEventRules = true;
+    await s3.page.click('#evSend');
+    check('unpublished rules show a clear message and nothing is stored', !!(await until(async () => /not available/i.test(await s3.page.textContent('#toasts')), 5000)) && evCount() === 3);
+    db.noEventRules = false;
+
+    await A.page.selectOption('#evFilter', 'closed');
+    check('admin Closed filter lists finished bookings', (await A.page.locator('#evList .evcard').count()) === 3);
+    await A.page.selectOption('#evFilter', 'active');
+    check('admin active filter is empty now', (await A.page.locator('#evList .evcard').count()) === 0);
+    await A.page.selectOption('#evFilter', 'all');
+    await A.page.fill('#evSearch', 'Divya');
+    check('admin search finds a customer', (await A.page.locator('#evList .evcard').count()) === 1);
+    await A.page.fill('#evSearch', '');
+    const kp = (await A.page.textContent('#evKpis')).replace(/\s+/g, '');
+    check('admin summary counts the bookings', kp.includes('Allbookings3'), kp.slice(0, 120));
+
+    await A.page.reload();
+    await A.page.waitForSelector('#app:not([hidden])');
+    await A.page.waitForSelector('#livePill.up');
+    await A.page.click('#nav [data-tab="events"]');
+    await A.page.selectOption('#evFilter', 'all');
+    check('bookings survive an admin reload', !!(await until(async () => (await A.page.locator('#evList .evcard').count()) === 3, 5000)));
+    await s.page.reload();
+    await s.page.waitForSelector('#menuRoot .card');
+    check('customer bookings survive a reload', (await s.page.evaluate(() => window.__lh.events.length)) === 1 && !!(await until(() => s.page.isVisible('#eventsBtn'))));
+
+    const sn = await newShop({ viewport: { width: 360, height: 740 } });
+    check('event buttons fit a 360px phone without overflow', !!(await until(() => sn.page.isVisible('#eventsBtn'))) && (await overflow(sn)) <= 1, String(await overflow(sn)));
+    await sn.page.click('#eventsBtn');
+    await sn.page.click('#eventsBody [data-evv="book"]');
+    check('booking form fits a 360px phone without overflow', (await sn.page.evaluate(() => { const d = document.querySelector('#eventsDrawer'); return d.scrollWidth - d.clientWidth; })) <= 1);
+    await setSwitch(A, '#evToggle', false);
+    check('turning bookings off is published', !!(await until(() => (db.docs.get('config/events') || {}).on === false)));
+    const s4 = await newShop();
+    check('event buttons disappear when bookings are off', !!(await until(async () => (await s4.page.isHidden('#eventsBtn')) && (await s4.page.isHidden('#heroEvents')))));
+    check('customers who booked can still see their bookings', !!(await until(() => s.page.isVisible('#eventsBtn'))) && (await s.page.isHidden('#heroEvents')));
+    await A.page.click('#nav [data-tab="orders"]');
+  });
+
   /* ---------------- Closed store ---------------- */
   await scenario('closed kitchen and sold-out items', async () => {
     const s = await newShop();
@@ -640,7 +802,7 @@ async function until(fn, ms = 8000, step = 60) {
     for (const vp of [{ width: 390, height: 800, mobile: true }, { width: 1024, height: 768 }]) {
       const h = await world.open('admin', { viewport: { width: vp.width, height: vp.height }, mobile: vp.mobile, geo: geoAt(1) });
       await world.login(h);
-      for (const tab of ['orders', 'deliveries', 'analytics', 'menu', 'history', 'feedback', 'settings']) {
+      for (const tab of ['orders', 'deliveries', 'events', 'analytics', 'menu', 'history', 'feedback', 'settings']) {
         await h.page.evaluate((t) => document.querySelector(`#nav [data-tab="${t}"]`).click(), tab);
         await sleep(150);
         const ov = await overflow(h);

@@ -66,6 +66,8 @@
     store.del('lastActive');
     store.del('orders');
     store.del('fbk');
+    store.del('evk');
+    store.del('evmeta');
     location.reload();
   }
   $('#lockBtn').addEventListener('click', lock);
@@ -94,6 +96,12 @@
   let fbSeen = Number(store.get('fbSeen', 0)) || 0;
   let fbNewSince = fbSeen;
   const saveFeedback = () => store.set('fbk', [...feedback.values()].sort((a, b) => b.ts - a.ts).slice(0, 500));
+  const evk = new Map();
+  let evMeta = {};
+  let evErr = '';
+  const saveEv = () => store.set('evk', [...evk.values()].sort((a, b) => b.ts - a.ts).slice(0, 500));
+  const saveEvMeta = () => store.set('evmeta', evMeta);
+  const evStatusOf = (id) => (evMeta[id] && evMeta[id].s) || 'pending';
   const saveOrders = () => store.set('orders', [...orders.values()].sort((a, b) => b.ts - a.ts).slice(0, 1500));
   const saveMeta = () => store.set('meta', meta);
   const statusOf = (id) => (meta[id] && meta[id].s) || 'pending';
@@ -115,6 +123,8 @@
     store.get('orders', []).forEach((o) => { const v = LH.validateOrder(o); if (v && v.ts > clearTs) orders.set(v.id, v); });
     draft = readDraft();
     store.get('fbk', []).forEach((x) => { const f = LH.validateFeedback(x); if (f) feedback.set(f.id, f); });
+    store.get('evk', []).forEach((x) => { const v = LH.validateEvent(x); if (v) evk.set(v.id, v); });
+    evMeta = store.get('evmeta', {});
 
     buildMenuAdmin();
     wireUI();
@@ -125,6 +135,7 @@
     LH.connect('orders');
     LH.connect('ops');
     LH.connect('feedback');
+    LH.connect('events');
     setInterval(() => { if (!document.hidden) renderBoard(); }, 30000);
     // A new order that nobody has accepted keeps chiming once a minute (for up to 30 minutes) so it is never missed.
     setInterval(() => {
@@ -186,6 +197,21 @@
     scheduleRender();
   });
   LH.on('fbsync', ({ ok, code }) => { fbErr = ok ? '' : code; renderFbState(); });
+  LH.on('event', (e) => {
+    if (evk.has(e.id)) return;
+    evk.set(e.id, e);
+    saveEv();
+    if (Date.now() - e.ts < 3 * 60 * 1000) { chime(); toast(`New event booking ${e.id} · ${e.n} · ${evDay(e.d)}`, 'new'); }
+    scheduleRender();
+  });
+  LH.on('evstatus', ({ id, s, r, ts }) => {
+    const m = evMeta[id] || (evMeta[id] = {});
+    if (ts < (m.sts || 0)) return;
+    m.s = s; m.r = r; m.sts = ts;
+    saveEvMeta(); scheduleRender();
+  });
+  LH.on('evcfg', scheduleRender);
+  LH.on('evsync', ({ ok, code }) => { evErr = ok ? '' : code; renderEvState(); });
 
   let renderQueued = false;
   function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; renderAll(); }); }
@@ -921,6 +947,108 @@
     renderFbState();
   }
 
+  /* ---------- Event bookings ---------- */
+  const EVS = LH.EVENT_STATUS;
+  const evDay = (s) => LH.parseDateKey(s).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const evOn = () => LH.getEvCfg().on;
+  const todayKey = () => LH.dateKey(new Date());
+  const evPast = (e) => e.d < todayKey();
+
+  // Confirmed bookings from today on: the time slots customers are told are taken.
+  function evBusy() {
+    const busy = {};
+    evk.forEach((e) => {
+      if (evStatusOf(e.id) !== 'confirmed' || evPast(e)) return;
+      (busy[e.d] || (busy[e.d] = [])).push(LH.slotStr(e.st, e.st + 60 * e.h));
+    });
+    return busy;
+  }
+  const publishEvCfg = (on) => LH.publishAdmin({ k: 'evcfg', on, busy: evBusy() });
+  const evConflict = (e) => [...evk.values()].find((x) => x.id !== e.id && x.d === e.d && evStatusOf(x.id) === 'confirmed' && e.st < x.st + 60 * x.h && x.st < e.st + 60 * e.h);
+
+  function renderEvBadge() {
+    const n = [...evk.values()].filter((e) => evStatusOf(e.id) === 'pending').length;
+    const el = $('#navEv');
+    el.hidden = !n; el.textContent = n;
+  }
+
+  function renderEvState() {
+    const el = $('#evState');
+    if (!el) return;
+    el.hidden = !evErr;
+    el.textContent = evErr === 'permission-denied' ? 'Event bookings are not available yet. Publish the updated Firestore rules (firestore.rules) in the Firebase Console, then reload this page.' : evErr ? 'Reconnecting to event bookings...' : '';
+  }
+
+  function renderEvents() {
+    const on = evOn();
+    $('#evToggle').checked = on;
+    $('#evLbl').textContent = on ? 'On' : 'Off';
+    const all = [...evk.values()];
+    const month = todayKey().slice(0, 7);
+    const earned = all.filter((e) => e.d.startsWith(month) && ['confirmed', 'completed'].includes(evStatusOf(e.id))).reduce((s, e) => s + e.total, 0);
+    $('#evKpis').innerHTML = [
+      kpi('Awaiting you', all.filter((e) => evStatusOf(e.id) === 'pending').length, 'requests to confirm or decline', '#f59e0b'),
+      kpi('Upcoming', all.filter((e) => evStatusOf(e.id) === 'confirmed' && !evPast(e)).length, 'confirmed bookings', '#22c55e'),
+      kpi('This month', fmt(earned), 'confirmed and completed events', '#60a5fa'),
+      kpi('All bookings', all.length, 'received so far', '#a78bfa')
+    ].join('');
+    const q = $('#evSearch').value.trim().toLowerCase();
+    const f = $('#evFilter').value;
+    const open = (e) => ['pending', 'confirmed'].includes(evStatusOf(e.id));
+    const shown = all.filter((e) => (f === 'all' || (f === 'active' ? open(e) : !open(e)))
+      && (!q || `${e.id} ${e.n} ${e.p} ${LH.EVENT_TYPE.get(e.ty).label}`.toLowerCase().includes(q)))
+      .sort((a, b) => (f === 'active' ? 1 : -1) * ((a.d + String(a.st).padStart(4, '0')) < (b.d + String(b.st).padStart(4, '0')) ? -1 : 1));
+    $('#evList').innerHTML = shown.length ? shown.slice(0, 200).map((e) => {
+      const s = evStatusOf(e.id), st = EVS[s], t = LH.EVENT_TYPE.get(e.ty), m = evMeta[e.id] || {};
+      const clash = s === 'pending' ? evConflict(e) : null;
+      const btn = (act, label, cls) => `<button class="act ${cls}" data-evact="${act}" data-evid="${esc(e.id)}">${label}</button>`;
+      const acts = s === 'pending' ? btn('confirmed', 'Confirm', '') + btn('declined', 'Decline', 'bad')
+        : s === 'confirmed' ? btn('completed', 'Mark completed', '') + btn('cancelled', 'Cancel booking', 'bad') : '';
+      return `<article class="fbcard evcard" data-ev="${esc(e.id)}">
+        <div class="fb-top"><span class="oid">${esc(e.id)}</span><span class="badge" style="background:${st.color}">${esc(st.label)}</span>${s === 'confirmed' && evPast(e) ? '<span class="chip warn">Past date</span>' : ''}${clash ? `<span class="chip warn">Overlaps ${esc(clash.id)}</span>` : ''}<span class="muted fb-date">requested ${ago(e.ts)}</span></div>
+        <div class="fb-who"><b>${t.icon} ${esc(t.label)}</b><span class="chip">${e.g} guest${e.g === 1 ? '' : 's'}</span></div>
+        <p class="ev-when">📅 ${esc(evDay(e.d))} · ${esc(LH.eventRange(e.st, e.h))} <span class="muted">(${e.h} hour${e.h === 1 ? '' : 's'})</span></p>
+        <div class="fb-who"><b>${esc(e.n)}</b><a href="tel:${esc(e.p)}">${esc(e.p)}</a></div>
+        ${e.nt ? `<p class="fb-text">“${esc(e.nt)}”</p>` : ''}
+        <p class="ev-price">${fmt(LH.EVENT.RATE)} × ${e.h} h + ${fmt(LH.EVENT.CLEAN)} cleaning${e.dec ? ` + ${fmt(LH.EVENT.DECOR)} decoration` : ''} = <b>${fmt(e.total)}</b> <span class="muted">(pay at the cafe)</span></p>
+        ${m.r && (s === 'declined' || s === 'cancelled') ? `<p class="muted">Reason: ${esc(m.r)}</p>` : ''}
+        ${acts ? `<div class="acts">${acts}</div>` : ''}
+      </article>`;
+    }).join('') : `<p class="muted" style="padding:24px;text-align:center">${all.length ? 'No bookings match these filters.' : 'No event bookings yet. Turn bookings on above and customers can request the cafe from the storefront.'}</p>`;
+    renderEvState();
+  }
+
+  async function setEvStatus(id, s, reason = '') {
+    const e = evk.get(id);
+    if (!e || !LH.EVENT_NEXT[evStatusOf(id)].includes(s)) return;
+    if (!LH.getRelay().ops) { toast('Still connecting. Try again in a moment.', 'bad'); return; }
+    if (s === 'confirmed') {
+      const c = evConflict(e);
+      if (c) { toast(`Overlaps confirmed booking ${c.id} (${evDay(c.d)}, ${LH.eventRange(c.st, c.h)}). Decline or move one of them first.`, 'bad'); return; }
+    }
+    const prev = evMeta[id];
+    evMeta[id] = { s, r: reason, sts: Date.now() };
+    saveEvMeta(); renderEvents(); renderEvBadge();
+    try { await LH.publishAdmin({ k: 'evst', id, s, r: reason }); }
+    catch (err) {
+      if (prev) evMeta[id] = prev; else delete evMeta[id];
+      saveEvMeta(); renderEvents(); renderEvBadge();
+      toast('Could not update the booking.', 'bad');
+      return;
+    }
+    try { await publishEvCfg(evOn()); toast(`${id}: ${EVS[s].label}`, 'ok'); }
+    catch (err) { toast(`${id} saved, but the availability shown to customers could not be refreshed. Toggle Event bookings or try again.`, 'bad'); }
+  }
+
+  function askEvReason(id, s) {
+    const reasons = s === 'declined' ? ['That time is not available', 'We need more notice', 'Capacity is full', 'Unable to host this event'] : ['Cancelled at the customer\'s request', 'The cafe is closed that day', 'Unable to host this event'];
+    openModal(`<h3>${s === 'declined' ? 'Decline' : 'Cancel'} booking ${esc(id)}</h3><div class="reason-list">${reasons.map((r) => `<button data-evreason="${esc(r)}">${esc(r)}</button>`).join('')}</div><button class="btn ghost" data-modal-close style="width:100%">Back</button>`);
+    $('#modalCard').onclick = (ev) => {
+      const b = ev.target.closest('[data-evreason]');
+      if (b) { closeModal(); setEvStatus(id, s, b.dataset.evreason); }
+    };
+  }
+
   /* ---------- Menu and store settings ---------- */
   function buildMenuAdmin() {
     $('#menuAdmin').innerHTML = MENU.map((c) => `<section class="mcat" data-cat="${c.id}"><header><span style="font-size:1.5rem">${c.icon}</span><h3>${esc(c.name)}</h3>
@@ -959,10 +1087,10 @@
     $('#connInfo').innerHTML = row('Orders channel', i.orders ? '🟢 connected' : '🟠 reconnecting') + row('Status channel', i.ops ? '🟢 connected' : '🟠 reconnecting') + row('Queued messages', i.queued || 0) + row('Orders stored', orders.size);
   }
 
-  function renderAll() { renderKpis(); renderFbBadge(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); if ($('#tab-deliveries').classList.contains('on')) renderDeliveries(); if ($('#tab-feedback').classList.contains('on')) { renderFeedback(); markFbSeen(); renderFbBadge(); } }
+  function renderAll() { renderKpis(); renderFbBadge(); renderEvBadge(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); if ($('#tab-deliveries').classList.contains('on')) renderDeliveries(); if ($('#tab-events').classList.contains('on')) renderEvents(); if ($('#tab-feedback').classList.contains('on')) { renderFeedback(); markFbSeen(); renderFbBadge(); } }
 
   /* ---------- UI wiring ---------- */
-  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], feedback: ['Customer feedback', 'Star ratings and comments about orders, products and service'], settings: ['Settings', 'Alerts, connection and data'] };
+  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], events: ['Event bookings', 'Parties, celebrations and meetups at the cafe'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], feedback: ['Customer feedback', 'Star ratings and comments about orders, products and service'], settings: ['Settings', 'Alerts, connection and data'] };
   function showTab(name) {
     if (!TABS[name]) name = 'orders';
     $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
@@ -971,6 +1099,7 @@
     if (name === 'analytics') renderAnalytics();
     if (name === 'history') renderHistory();
     if (name === 'deliveries') renderDeliveries();
+    if (name === 'events') renderEvents();
     if (name === 'feedback') { fbNewSince = fbSeen; renderFeedback(); markFbSeen(); renderFbBadge(); }
     history.replaceState(null, '', `#${name}`);
     if (started) scrollTo({ top: 0, behavior: 'auto' });
@@ -986,6 +1115,21 @@
     $('#histSvc').addEventListener('change', renderHistory);
     ['fbRating', 'fbSvc', 'fbShow'].forEach((id) => $(`#${id}`).addEventListener('change', renderFeedback));
     $('#fbSearch').addEventListener('input', renderFeedback);
+    $('#evSearch').addEventListener('input', renderEvents);
+    $('#evFilter').addEventListener('change', renderEvents);
+    $('#evToggle').addEventListener('change', async (e) => {
+      const on = e.target.checked;
+      $('#evLbl').textContent = on ? 'On' : 'Off';
+      if (!LH.getRelay().ops) { toast('Still connecting. Try again in a moment.', 'bad'); renderEvents(); return; }
+      try { await publishEvCfg(on); toast(on ? 'Event bookings are on' : 'Event bookings are off', 'ok'); }
+      catch (err) { toast('Could not publish the change.', 'bad'); renderEvents(); }
+    });
+    $('#evList').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-evact]');
+      if (!b) return;
+      const act = b.dataset.evact;
+      if (act === 'declined' || act === 'cancelled') askEvReason(b.dataset.evid, act); else setEvStatus(b.dataset.evid, act);
+    });
     const seg = (sel, set) => $(sel).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; $$('button', $(sel)).forEach((x) => x.classList.toggle('on', x === b)); set(b.dataset.v); });
     seg('#boardSvc', (v) => { boardSvc = v; renderBoard(); });
     seg('#anSvc', (v) => { anSvc = v; renderAnalytics(); });

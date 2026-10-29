@@ -46,12 +46,37 @@ class Db {
     return !('c' in d) || (typeof d.c === 'string' && d.c.length <= 300 && !/[<>]/.test(d.c));
   }
 
+  // Mirrors validEvent() in firestore.rules, written independently of core.js so that a drift between the two is caught.
+  validEvent(d, id, uid) {
+    const all = ['id', 'uid', 'at', 'n', 'p', 'ty', 'g', 'd', 'st', 'h', 'dec', 'nt', 'total'];
+    if (Object.keys(d).some((k) => !all.includes(k)) || !all.filter((k) => k !== 'nt').every((k) => k in d)) return false;
+    const isInt = Number.isInteger;
+    if (d.id !== id || d.uid !== uid || !d.at || !d.at.__serverTs) return false;
+    if (typeof d.n !== 'string' || !d.n.length || d.n.length > 40 || /[<>]/.test(d.n)) return false;
+    if (typeof d.p !== 'string' || !/^[+0-9]{10,16}$/.test(d.p)) return false;
+    if (!['bday', 'anniv', 'success', 'together', 'shower', 'corp', 'other'].includes(d.ty)) return false;
+    if (!isInt(d.g) || d.g < 1 || d.g > 100) return false;
+    if (typeof d.d !== 'string' || !/^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/.test(d.d)) return false;
+    if (!isInt(d.st) || d.st < 480 || d.st > 1380 || d.st % 30 !== 0) return false;
+    if (!isInt(d.h) || d.h < 1 || d.h > 12 || d.st + 60 * d.h > 1440) return false;
+    if (typeof d.dec !== 'boolean' || !isInt(d.total) || d.total !== 1000 * d.h + 500 + (d.dec ? 500 : 0)) return false;
+    return !('nt' in d) || (typeof d.nt === 'string' && d.nt.length <= 200 && !/[<>]/.test(d.nt));
+  }
+
+  eventsOn() { const c = this.docs.get('config/events'); return !!c && c.on === true; }
+
   allowed(op, p, uid, data) {
     const [col, id] = p.split('/');
     if (this.noMailRules && (col === 'mail' || col === 'mailq')) return false; // simulates firestore.rules not yet republished
     if (this.noFeedbackRules && col === 'feedback') return false;
+    if (this.noEventRules && col === 'events' && op === 'create') return false;
     const admin = uid === ADMIN_UID;
     const signedIn = !!uid;
+    if (col === 'events') {
+      if (op === 'create') return signedIn && this.eventsOn() && /^EV-[A-Z0-9]{6,10}$/.test(id) && this.validEvent(data, id, uid);
+      return admin;
+    }
+    if (col === 'evstatus') return op === 'get' ? signedIn : admin;
     if (col === 'feedback') {
       if (op === 'create') return signedIn && /^LH-[A-Z0-9]{6,10}$/.test(id) && this.validFeedback(data, id, uid);
       return admin;

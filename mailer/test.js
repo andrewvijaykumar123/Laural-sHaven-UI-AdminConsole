@@ -27,6 +27,25 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'A@B.CO', it: [['masala-tea', 1]] }).em, 'a@b.co');
   assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'nope', it: [['masala-tea', 1]] }).em, '');
 
+  // event bookings: Rs 1000/hour + Rs 500 cleaning + optional Rs 500 decoration
+  assert.strictEqual(LH.eventQuote(3, true).total, 4000);
+  assert.strictEqual(LH.eventQuote(3, false).total, 3500);
+  assert.strictEqual(LH.eventQuote(1, false).total, 1500);
+  const tomorrow = LH.dateKey(new Date(Date.now() + 86400000));
+  const ev = (x = {}) => LH.validateEvent({ id: 'EV-ABC234', n: 'Meera <b>', p: '98765 01234', ty: 'bday', g: 20, d: tomorrow, st: 1080, h: 3, dec: true, nt: 'Cake <i>', total: 1, ...x });
+  assert.strictEqual(ev().total, 4000, 'the total is recomputed, never trusted');
+  assert.ok(!/[<>]/.test(ev().n + ev().nt), 'markup is stripped');
+  assert.strictEqual(ev({ st: 1260, h: 4 }), null, 'must end by midnight');
+  assert.strictEqual(ev({ st: 1090 }), null, 'start is on a half hour');
+  assert.strictEqual(ev({ st: 420 }), null, 'not before opening');
+  assert.strictEqual(ev({ h: 13 }), null); assert.strictEqual(ev({ h: 0 }), null);
+  assert.strictEqual(ev({ g: 101 }), null); assert.strictEqual(ev({ p: '123' }), null);
+  assert.strictEqual(ev({ ty: 'nope' }), null); assert.strictEqual(ev({ d: '2026-13-40' }), null);
+  assert.strictEqual(ev({ id: 'LH-ABC234' }), null);
+  assert.ok(LH.inEventWindow(tomorrow) && !LH.inEventWindow('2001-01-01'));
+  assert.ok(LH.slotsClash(1140, 2, [[1080, 1260]]) && !LH.slotsClash(1260, 2, [[1080, 1260]]) && !LH.slotsClash(960, 2, [[1080, 1260]]));
+  assert.strictEqual(LH.eventRange(1080, 3), '6:00 PM - 9:00 PM');
+
   // pending: received; accepted: confirm; ready: ready; repeat: nothing
   const orders = [{ id: 'LH-AAAAAA', data: doc('LH-AAAAAA'), ts: T0 - 600000 }];
   const statuses = {}; const mails = {};
