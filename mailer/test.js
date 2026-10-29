@@ -238,20 +238,6 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(LH.validateFeedback({ id: 'LH-AAAAAA', sr: 0, ir: [] }), null, 'a service rating is required');
   assert.strictEqual(LH.validateFeedback({ id: 'bad', sr: 5, ir: [] }), null, 'feedback needs a valid order id');
 
-  // OAuth 2.0 transport: Gmail API call carries the refresh-token exchange result and a valid raw message
-  Object.assign(process.env, { GMAIL_CLIENT_ID: 'cid', GMAIL_CLIENT_SECRET: 'csecret', GMAIL_REFRESH_TOKEN: 'rtoken' });
-  const realFetch = global.fetch; const hits = [];
-  global.fetch = async (url, init) => { hits.push({ url, init }); return new Response(JSON.stringify(url.includes('oauth2') ? { access_token: 'at', expires_in: 3600 } : { id: 'm' }), { status: 200 }); };
-  try {
-    const io = require('./io');
-    assert.strictEqual(io.SENDER, 'lauralshavensupport@gmail.com');
-    await io.transport()({ to: 'a@b.co', subject: 'Hi \u20b9119', text: 't', html: '<p>h</p>', attachments: [{ filename: 'r.csv', content: 'a,b', contentType: 'text/csv' }] });
-    const call = hits.find((h) => h.url.includes('gmail.googleapis.com'));
-    assert.strictEqual(call.init.headers.Authorization, 'Bearer at');
-    const mime = Buffer.from(JSON.parse(call.init.body).raw, 'base64url').toString('utf8');
-    assert.ok(/^From: "Laural's Haven" <lauralshavensupport@gmail\.com>/m.test(mime) && /^To: a@b\.co/m.test(mime) && mime.includes('r.csv'), 'raw message is complete');
-  } finally { global.fetch = realFetch; for (const k of ['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN']) delete process.env[k]; }
-
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);

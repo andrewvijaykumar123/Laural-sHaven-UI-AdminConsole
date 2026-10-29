@@ -101,43 +101,8 @@ function fakeServer(script) {
   const ok = await handleSend({ to: 'A@B.co', subject: 'Hello\r\nBcc: evil@x.com', text: 't', html: 'h' }, env, opener(srv.port));
   assert.strictEqual(ok[0], 204);
   assert.ok(!/^Bcc:/mi.test(srv.log.data), 'header injection is neutralised');
-  assert.strictEqual(srv.log.cmds[1], `AUTH PLAIN ${Buffer.from('\0lauralshavensupport@gmail.com\0xyz').toString('base64')}`, 'spaces in the app password are removed');
+  assert.strictEqual(srv.log.cmds[1], `AUTH PLAIN ${Buffer.from('\0andrewvijaykumar123@gmail.com\0xyz').toString('base64')}`, 'spaces in the app password are removed');
   srv.server.close();
-
-  // OAuth 2.0 through the Gmail API: no app password, no SMTP socket
-  const oenv = { GMAIL_CLIENT_ID: 'cid', GMAIL_CLIENT_SECRET: 'csecret', GMAIL_REFRESH_TOKEN: 'rtoken' };
-  const calls = [];
-  const fakeFetch = async (url, init) => {
-    calls.push({ url, init });
-    if (url === 'https://oauth2.googleapis.com/token') return new Response(JSON.stringify({ access_token: 'at-1', expires_in: 3600 }), { status: 200 });
-    return new Response(JSON.stringify({ id: 'm1' }), { status: 200 });
-  };
-  const noSocket = () => { throw new Error('SMTP must not be used with OAuth'); };
-  assert.strictEqual((await handleSend({ to: 'A@B.co', subject: 'Hello\r\nBcc: evil@x.com', text: 't', html: '<p>\u20b9119</p>' }, oenv, noSocket, fakeFetch))[0], 204);
-  const tok = calls.find((c) => c.url.includes('oauth2.googleapis.com'));
-  assert.ok(String(tok.init.body).includes('grant_type=refresh_token') && String(tok.init.body).includes('refresh_token=rtoken'));
-  const send = calls.find((c) => c.url.includes('gmail.googleapis.com'));
-  assert.strictEqual(send.init.headers.Authorization, 'Bearer at-1');
-  const raw = Buffer.from(JSON.parse(send.init.body).raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-  assert.match(raw, /^From: "?Laural's Haven"? <lauralshavensupport@gmail\.com>/m);
-  assert.match(raw, /^To: <a@b\.co>/m);
-  assert.ok(!/^Bcc:/mi.test(raw), 'header injection is neutralised');
-  assert.strictEqual(decodeBody(raw, 'text/html'), '<p>\u20b9119</p>');
-  // the access token is reused until it expires
-  await handleSend({ to: 'a@b.co', subject: 's', text: 't', html: 'h' }, oenv, noSocket, fakeFetch);
-  assert.strictEqual(calls.filter((c) => c.url.includes('oauth2.googleapis.com')).length, 1);
-  // Google refusing the refresh token surfaces a clear error without leaking secrets
-  const badAuth = async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
-  const fresh = await import(pathToFileURL(tmp).href + '?fresh');
-  const denied = await fresh.handleSend({ to: 'a@b.co', subject: 's', text: 't', html: 'h' }, oenv, noSocket, badAuth);
-  assert.strictEqual(denied[0], 502);
-  assert.ok(/invalid_grant/.test(denied[1]) && !denied[1].includes('csecret') && !denied[1].includes('rtoken'));
-  // Gmail API rejecting the message
-  const rejecting = async (url) => (url.includes('oauth2') ? new Response(JSON.stringify({ access_token: 'at-2', expires_in: 3600 }), { status: 200 }) : new Response(JSON.stringify({ error: { message: 'Invalid To header' } }), { status: 400 }));
-  const fresh2 = await import(pathToFileURL(tmp).href + '?fresh2');
-  const refused = await fresh2.handleSend({ to: 'a@b.co', subject: 's', text: 't', html: 'h' }, oenv, noSocket, rejecting);
-  assert.strictEqual(refused[0], 502);
-  assert.match(refused[1], /Gmail API 400: Invalid To header/);
 
   // HTTP layer: no token, preflight
   const res = await worker.fetch(new Request('https://relay.test/send', { method: 'POST', body: '{}' }), env);

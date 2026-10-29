@@ -44,23 +44,19 @@ Limits: no emails are sent for events, customers cannot cancel online (they are 
 
 ## Instant order emails
 
-Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through the Gmail API with OAuth 2.0 (sender lauralshavensupport@gmail.com, scope gmail.send only). If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.
+Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through Gmail SMTP. If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.
 
 One-time setup:
 
 1. Republish `firestore.rules` (adds the mail and mailq collections).
-2. Create the Gmail OAuth credentials once (no app password needed):
-   1. In Google Cloud Console, create a project, enable the Gmail API, and set up the OAuth consent screen (External). Set its publishing status to In production, otherwise the refresh token expires after 7 days.
-   2. Credentials > Create credentials > OAuth client ID > Desktop app. Note the client ID and client secret.
-   3. Run `$env:GMAIL_CLIENT_ID='...'; $env:GMAIL_CLIENT_SECRET='...'; node mailer/authorize.js`, open the link and sign in as lauralshavensupport@gmail.com (Google shows an unverified-app notice; choose Advanced and continue). Copy the printed refresh token.
-3. In Cloudflare, redeploy the Worker with the contents of worker/relay.js and add the secrets GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN. The existing GH_TOKEN secret stays for the fallback. In GitHub, add the same three repository secrets (plus FIREBASE_SERVICE_ACCOUNT) for the Actions mailer and the daily report. GMAIL_APP_PASSWORD is still accepted as a fallback.
-4. Keep the admin console open on at least one device while the cafe takes orders; emails are sent from there.
+2. In Cloudflare, redeploy the Worker with the contents of worker/relay.js and add the secret GMAIL_APP_PASSWORD (a Gmail app password for the sender account). The existing GH_TOKEN secret stays for the fallback.
+3. Keep the admin console open on at least one device while the cafe takes orders; emails are sent from there.
 
 ## Tests
 
 `powershell
 node mailer/test.js    # email templates, planner and mailer
-node worker/test.js    # relay Gmail API and SMTP clients against fakes
+node worker/test.js    # relay SMTP client against a fake server
 node e2e/run.js        # both web apps in Edge with a fake Firebase and relay (needs playwright-core; SHOP_DIR=..\Laural-sHaven-UI)
 `
 
