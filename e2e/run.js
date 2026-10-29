@@ -227,7 +227,7 @@ async function until(fn, ms = 8000, step = 60) {
     const s = await newShop();
     const o = await place(s, { items: [2], svc: 'take', pay: 'upi', name: "=SUM(1+1) O'Neil", em: 'upi@example.com' });
     placed.upi = o.id;
-    check('UPI QR is shown', await s.page.isVisible('#qrImg') && !!(await s.page.getAttribute('#qrImg', 'src')));
+    check('UPI QR is shown', await s.page.isVisible('#qrImg') && !!(await until(() => s.page.evaluate(() => { const i = document.querySelector('#qrImg'); return i && i.complete && i.naturalWidth === 1039 && /payment-upi\.jpeg$/.test(i.src); }))));
     await card(A, o.id).waitFor();
     check('admin sees UPI unverified', /UPI unverified/.test(await card(A, o.id).textContent()));
     await card(A, o.id).locator('[data-act="pay"]').click();
