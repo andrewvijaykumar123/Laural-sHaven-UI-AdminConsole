@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      READY: ${{ secrets.GMAIL_APP_PASSWORD != '' && secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+      READY: ${{ (secrets.GMAIL_REFRESH_TOKEN != '' || secrets.GMAIL_APP_PASSWORD != '') && secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
     steps:
       - name: Secrets not configured yet
         if: env.READY != 'true'
-        run: echo "Add GMAIL_APP_PASSWORD and FIREBASE_SERVICE_ACCOUNT as repository secrets to enable emails."
+        run: echo "Add GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN and FIREBASE_SERVICE_ACCOUNT as repository secrets to enable emails."
       - uses: actions/checkout@v4
         if: env.READY == 'true'
       - uses: actions/setup-node@v4
@@ -43,3 +43,6 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}

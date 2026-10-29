@@ -1,8 +1,9 @@
 /* Cloudflare Worker for the Laural's Haven admin console. Only the signed-in admin can use it.
-     POST /send   sends one email straight away through Gmail SMTP (a few seconds, no GitHub Actions involved).
+     POST /send   sends one email straight away (a few seconds, no GitHub Actions involved), through the Gmail API with OAuth 2.0.
      POST /       starts a mailer workflow on GitHub (the scheduled fallback and the daily report).
-   Secrets: GMAIL_APP_PASSWORD (Gmail app password of SENDER; /send answers 501 until it is set) and GH_TOKEN (fine-grained
-   token, this repo only, Actions: read and write; needed only for POST /). */
+   Secrets: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN (OAuth 2.0 for SENDER, scope gmail.send only; see
+   mailer/authorize.js). GMAIL_APP_PASSWORD still works as a fallback over SMTP when the OAuth secrets are not set. /send answers
+   501 until one of them is set. GH_TOKEN (fine-grained token, this repo only, Actions: read and write) is needed only for POST /. */
 import { connect } from 'cloudflare:sockets';
 
 const PROJECT_ID = 'laural-shavencafe';
@@ -11,7 +12,9 @@ const REPO = 'andrewvijaykumar123/Laural-sHaven-UI-AdminConsole';
 const ORIGIN = 'https://andrewvijaykumar123.github.io';
 const WORKFLOWS = ['mailer.yml', 'daily-report.yml'];
 const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
-const SENDER = 'andrewvijaykumar123@gmail.com';
+const SENDER = 'lauralshavensupport@gmail.com';
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 const SHOP = "Laural's Haven";
 const SMTP_HOST = 'smtp.gmail.com';
 const SMTP_PORT = 465; // implicit TLS
@@ -143,6 +146,40 @@ async function smtpSend({ open, user, pass, to, subject, text, html, name = SHOP
   }
 }
 
+/* ---------- Gmail API with OAuth 2.0 (no app password) ---------- */
+const hasOAuth = (env) => !!(env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN);
+const b64url = (bytes) => toB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let cached = { token: '', exp: 0 };
+
+async function accessToken(env, doFetch) {
+  if (cached.token && cached.exp - 60000 > Date.now()) return cached.token;
+  const r = await doFetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: env.GMAIL_CLIENT_ID, client_secret: env.GMAIL_CLIENT_SECRET, refresh_token: env.GMAIL_REFRESH_TOKEN, grant_type: 'refresh_token' })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error(`Google sign-in failed: ${String(j.error || r.status).slice(0, 60)}`);
+  cached = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
+  return cached.token;
+}
+
+async function gmailApiSend({ env, from, to, subject, text, html, name = SHOP, doFetch = fetch }) {
+  const id = crypto.randomUUID();
+  const raw = b64url(enc.encode(buildMessage({ from, name, to, subject, text, html, id })));
+  const r = await doFetch(GMAIL_SEND_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await accessToken(env, doFetch)}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw })
+  });
+  if (!r.ok) {
+    if (r.status === 401) cached = { token: '', exp: 0 };
+    const j = await r.json().catch(() => ({}));
+    throw new Error(`Gmail API ${r.status}: ${String(j.error && j.error.message || '').slice(0, 120)}`);
+  }
+  return { id };
+}
+
 /* ---------- Request handling ---------- */
 const recent = [];
 function allowSend(now = Date.now()) {
@@ -152,8 +189,8 @@ function allowSend(now = Date.now()) {
   return true;
 }
 
-async function handleSend(body, env, open) {
-  if (!env.GMAIL_APP_PASSWORD) return [501, 'Email sending is not configured on the relay'];
+async function handleSend(body, env, open, doFetch = fetch) {
+  if (!hasOAuth(env) && !env.GMAIL_APP_PASSWORD) return [501, 'Email sending is not configured on the relay'];
   const to = oneLine(body.to).toLowerCase();
   const subject = oneLine(body.subject);
   const text = typeof body.text === 'string' ? body.text : '';
@@ -162,10 +199,12 @@ async function handleSend(body, env, open) {
   if (!subject || subject.length > 200 || !text || text.length > 30000 || !html || html.length > 150000) return [400, 'Invalid message'];
   if (!allowSend()) return [429, 'Too many emails, slow down'];
   try {
-    await smtpSend({ open, user: env.GMAIL_USER || SENDER, pass: String(env.GMAIL_APP_PASSWORD).replace(/\s+/g, ''), to, subject, text, html });
+    const from = env.GMAIL_USER || SENDER;
+    if (hasOAuth(env)) await gmailApiSend({ env, from, to, subject, text, html, doFetch });
+    else await smtpSend({ open, user: from, pass: String(env.GMAIL_APP_PASSWORD).replace(/\s+/g, ''), to, subject, text, html });
     return [204, null];
   } catch (e) {
-    return [502, String(e && e.message || 'SMTP error').slice(0, 200)];
+    return [502, String(e && e.message || 'Send error').slice(0, 200)];
   }
 }
 
