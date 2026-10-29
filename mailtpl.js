@@ -9,6 +9,9 @@
   const SHOP = "Laural's Haven";
   const BRAND = '#b45309';
   const IST_MS = 330 * 60000;
+  /* Printed on every invoice. There is no GST on the bill today; change TAX_NOTE if that changes. */
+  const CAFE = { name: "Laural's Haven Cafe", phone: '9962419353', map: 'https://maps.app.goo.gl/XeqJJUZKzVbcAqjM8', mapLabel: 'maps.app.goo.gl/XeqJJUZKzVbcAqjM8' };
+  const TAX_NOTE = 'Not applicable';
 
   function shell(LH, title, inner, preheader) {
     return `<!doctype html><html><body style="margin:0;background:#f6f1ea;font-family:Segoe UI,Arial,sans-serif;color:#1f2937">
@@ -42,6 +45,67 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
   const payLine = (o, paid) => (o.pay === 'upi' ? (paid ? 'Paid by UPI' : 'UPI (we confirm payment at the counter)') : o.svc === 'deliver' ? 'Cash on delivery' : 'Pay at the counter');
   const textItems = (LH, o) => [...o.it.map(([id, q]) => `${q} x ${LH.ITEMS.get(id).name}  ${LH.fmt(LH.ITEMS.get(id).price * q)}`), ...(o.svc === 'deliver' ? [`Delivery  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : [])].join('\n');
   const placedAt = (o) => new Date(o.ts + IST_MS).toISOString().slice(0, 16).replace('T', ' ');
+
+  /* ---- Invoice (no GST). One layout for the printed bill and the emailed copy; inline styles only so it survives mail clients. ---- */
+  const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = (n) => (n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? ` ${ONES[n % 10]}` : ''));
+  const three = (n) => [n >= 100 ? `${ONES[Math.floor(n / 100)]} Hundred` : '', n % 100 ? two(n % 100) : ''].filter(Boolean).join(' ');
+  function rupeesInWords(n) {
+    n = Math.round(Number(n)) || 0;
+    if (n <= 0) return 'Zero Rupees Only';
+    const parts = [[Math.floor(n / 1e7), 'Crore'], [Math.floor(n / 1e5) % 100, 'Lakh'], [Math.floor(n / 1e3) % 100, 'Thousand']]
+      .filter(([v]) => v).map(([v, u]) => `${three(v)} ${u}`);
+    if (n % 1000) parts.push(three(n % 1000));
+    return `${parts.join(' ')} Rupees Only`;
+  }
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function invoiceDate(ts) {
+    const d = new Date(ts + IST_MS);
+    const h = d.getUTCHours();
+    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${String(h % 12 || 12).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'} IST`;
+  }
+  const payMethod = (o) => (o.pay === 'upi' ? 'UPI' : o.svc === 'deliver' ? 'Cash on delivery' : 'Cash at counter');
+
+  /* ctx.paid: the bill is settled. */
+  function invoiceHtml(LH, o, ctx = {}) {
+    const e = LH.esc; const f = (n) => e(LH.fmt(n));
+    const del = o.svc === 'deliver';
+    const fee = del ? (o.fee || 0) : 0;
+    const th = 'padding:8px 6px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;border-bottom:2px solid #1f2937';
+    const td = 'padding:9px 6px;border-bottom:1px solid #e5e7eb;font-size:13px';
+    const rows = o.it.map(([id, q], i) => {
+      const it = LH.ITEMS.get(id);
+      return `<tr><td style="${td};color:#6b7280">${i + 1}</td><td style="${td}">${e(it.name)}</td><td align="center" style="${td}">${q}</td><td align="right" style="${td}">${f(it.price)}</td><td align="right" style="${td}">${f(it.price * q)}</td></tr>`;
+    }).join('');
+    const sum = (label, val, strong) => `<tr><td style="padding:5px 6px;font-size:${strong ? 15 : 13}px;${strong ? 'font-weight:700;border-top:2px solid #1f2937;' : 'color:#4b5563;'}">${label}</td><td align="right" style="padding:5px 6px;font-size:${strong ? 15 : 13}px;${strong ? 'font-weight:700;border-top:2px solid #1f2937;' : ''}">${val}</td></tr>`;
+    const serve = o.svc === 'take' ? 'Takeaway' : del ? 'Home delivery' : `Dine-in${o.tbl ? `, table ${o.tbl}` : ''}`;
+    const status = ctx.paid ? ['PAID', '#15803d'] : o.pay === 'upi' ? ['UPI PAYMENT PENDING', '#b45309'] : ['PAYMENT DUE', '#b45309'];
+    const lbl = 'font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;padding-bottom:3px';
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;border-collapse:collapse">
+<tr><td style="padding:0 0 14px;border-bottom:3px solid ${BRAND}"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td valign="top"><div style="font-size:22px;font-weight:800;color:${BRAND}">${e(CAFE.name)}</div>
+<div style="font-size:12px;color:#4b5563;line-height:1.6;margin-top:4px">Phone: ${e(CAFE.phone)}<br>Google Maps: <a href="${e(CAFE.map)}" style="color:#4b5563">${e(CAFE.mapLabel)}</a></div></td>
+<td valign="top" align="right"><div style="font-size:24px;font-weight:800;letter-spacing:.08em;color:#1f2937">INVOICE</div>
+<div style="display:inline-block;margin-top:6px;padding:3px 10px;border:1.5px solid ${status[1]};border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;color:${status[1]}">${status[0]}</div></td></tr></table></td></tr>
+<tr><td style="padding:14px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td valign="top" width="50%" style="font-size:13px;line-height:1.55"><div style="${lbl}">Billed to</div><b>${e(o.n)}</b><br>${e(o.p)}${o.em ? `<br>${e(o.em)}` : ''}${del ? `<br>${e(o.addr)}` : ''}</td>
+<td valign="top" width="50%" align="right" style="font-size:13px;line-height:1.55"><div style="${lbl}">Invoice details</div>Invoice no: <b>${e(o.id)}</b><br>Date: ${e(invoiceDate(o.ts))}<br>Service: ${e(serve)}<br>Payment: ${e(payMethod(o))}</td></tr></table></td></tr>
+<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+<tr><th align="left" style="${th}">#</th><th align="left" style="${th}">Item</th><th align="center" style="${th}">Qty</th><th align="right" style="${th}">Rate</th><th align="right" style="${th}">Amount</th></tr>${rows}</table></td></tr>
+<tr><td align="right" style="padding-top:10px"><table role="presentation" cellpadding="0" cellspacing="0" style="min-width:240px;border-collapse:collapse">${sum('Subtotal', f(o.total - fee))}${del ? sum('Delivery charge', o.fee ? f(o.fee) : 'Free') : ''}${sum('GST', e(TAX_NOTE))}${sum('Total', f(o.total), true)}</table></td></tr>
+<tr><td style="padding-top:10px;font-size:12px;color:#4b5563"><b>Amount in words:</b> ${e(rupeesInWords(o.total))}${o.nt ? `<br><b>Note:</b> ${e(o.nt)}` : ''}</td></tr>
+<tr><td style="padding-top:18px;border-top:1px solid #e5e7eb;margin-top:14px;font-size:12px;color:#6b7280;text-align:center;line-height:1.6"><div style="padding-top:12px"><b style="color:#1f2937">Thank you for dining with ${e(CAFE.name)}. We look forward to serving you again.</b><br>This is a computer-generated invoice and does not need a signature.<br>${e(CAFE.phone)} &middot; <a href="${e(CAFE.map)}" style="color:#6b7280">${e(CAFE.mapLabel)}</a></div></td></tr></table>`;
+  }
+
+  function invoiceText(LH, o, ctx = {}) {
+    const del = o.svc === 'deliver';
+    const fee = del ? (o.fee || 0) : 0;
+    const lines = o.it.map(([id, q], i) => `${i + 1}. ${LH.ITEMS.get(id).name}  ${q} x ${LH.fmt(LH.ITEMS.get(id).price)} = ${LH.fmt(LH.ITEMS.get(id).price * q)}`);
+    return [`INVOICE - ${CAFE.name}`, `Phone: ${CAFE.phone}`, `Google Maps: ${CAFE.map}`, '',
+      `Invoice no: ${o.id}`, `Date: ${invoiceDate(o.ts)}`, `Billed to: ${o.n}, ${o.p}`, del ? `Delivery address: ${o.addr}` : where(o), `Payment: ${payMethod(o)} (${ctx.paid ? 'paid' : 'payment due'})`, '',
+      ...lines, '', `Subtotal  ${LH.fmt(o.total - fee)}`, ...(del ? [`Delivery charge  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : []), `GST: ${TAX_NOTE}`, `TOTAL  ${LH.fmt(o.total)}`, rupeesInWords(o.total), ''].join('\n');
+  }
 
   /* Sent the moment the order reaches the kitchen. */
   function receivedEmail(LH, o) {
@@ -77,23 +141,21 @@ ${itemsTable(LH, o)}${otpHtml(LH, o)}
     return { subject, html, text };
   }
 
-  function readyEmail(LH, o) {
+  function readyEmail(LH, o, ctx = {}) {
     const how = o.svc === 'take' ? 'Please collect it at the counter.' : `We will bring it to ${o.tbl ? `table ${o.tbl}` : 'your table'}.`;
     const subject = `Order ${o.id} is ready - ${SHOP}`;
-    const html = shell(LH, 'Your order is ready', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ready. ${LH.esc(how)}</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}.</p>`, `Order ${o.id} is ready.`);
-    const text = `Hi ${o.n}, your order ${o.id} is ready. ${how}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
+    const html = shell(LH, 'Your order is ready', `<p style="margin:0 0 18px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ready. ${LH.esc(how)} Your invoice is below.</p>
+${invoiceHtml(LH, o, { paid: !!ctx.paid })}`, `Order ${o.id} is ready. Invoice enclosed.`);
+    const text = `Hi ${o.n}, your order ${o.id} is ready. ${how}\n\n${invoiceText(LH, o, { paid: !!ctx.paid })}\nThank you for choosing ${SHOP}.`;
     return { subject, html, text };
   }
 
   function doneEmail(LH, o) {
     const del = o.svc === 'deliver';
     const subject = `Order ${o.id} is ${del ? 'delivered' : 'complete'} - ${SHOP}`;
-    const html = shell(LH, del ? 'Your order was delivered' : 'Your order is complete', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.</p>
-${itemsTable(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Thank you for choosing ${LH.esc(SHOP)}. We look forward to seeing you again.</p>`, `Order ${o.id} is ${del ? 'delivered' : 'complete'}.`);
-    const text = `Hi ${o.n}, your order ${o.id} is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\nThank you for choosing ${SHOP}.`;
+    const html = shell(LH, del ? 'Your order was delivered' : 'Your order is complete', `<p style="margin:0 0 18px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it. Your invoice is below.</p>
+${invoiceHtml(LH, o, { paid: true })}`, `Order ${o.id} is ${del ? 'delivered' : 'complete'}. Invoice enclosed.`);
+    const text = `Hi ${o.n}, your order ${o.id} is ${del ? 'delivered' : 'complete'}. We hope you enjoyed it.\n\n${invoiceText(LH, o, { paid: true })}\nThank you for choosing ${SHOP}.`;
     return { subject, html, text };
   }
 
@@ -121,10 +183,10 @@ ${itemsTable(LH, o)}
     const del = o.svc === 'deliver';
     const needR = !mail.r || mail.r === -1;
     if (del && !mail.o && s === 'out') jobs.push(['o', outEmail(LH, o)]);
-    if (needR && s === 'ready' && !del) jobs.push(['r', readyEmail(LH, o)]);
+    if (needR && s === 'ready' && !del) jobs.push(['r', readyEmail(LH, o, { paid: !!st.v })]);
     if (needR && s === 'completed') jobs.push(['r', doneEmail(LH, o)]);
     return jobs;
   }
 
-  return { SHOP, BRAND, IST_MS, shell, itemsTable, receivedEmail, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, plan };
+  return { SHOP, BRAND, CAFE, IST_MS, shell, itemsTable, invoiceHtml, invoiceText, rupeesInWords, receivedEmail, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, plan };
 });

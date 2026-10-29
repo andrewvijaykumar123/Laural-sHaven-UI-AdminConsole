@@ -186,9 +186,35 @@ const send = async (m) => { outbox.push(m); };
   assert.deepStrictEqual([...LH.nextFor({ svc: 'deliver' }, 'out')], ['completed']);
   assert.deepStrictEqual([...LH.nextFor({ svc: 'take' }, 'ready')], ['completed']);
 
+  // invoice: cafe details, no GST, arithmetic, words, escaping
+  const tpl = require('../mailtpl');
+  assert.strictEqual(tpl.rupeesInWords(0), 'Zero Rupees Only');
+  assert.strictEqual(tpl.rupeesInWords(45), 'Forty Five Rupees Only');
+  assert.strictEqual(tpl.rupeesInWords(1250), 'One Thousand Two Hundred Fifty Rupees Only');
+  assert.strictEqual(tpl.rupeesInWords(100000), 'One Lakh Rupees Only');
+  assert.strictEqual(tpl.rupeesInWords(123456), 'One Lakh Twenty Three Thousand Four Hundred Fifty Six Rupees Only');
+  const inv = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);
+  const ih = tpl.invoiceHtml(LH, inv, { paid: true });
+  for (const s of ["Laural's Haven Cafe".replace("'", '&#39;'), '9962419353', 'https://maps.app.goo.gl/XeqJJUZKzVbcAqjM8', 'INVOICE', 'GST', 'Not applicable', 'PAID', 'LH-AAAAAA', 'Amount in words']) {
+    assert.ok(ih.includes(s) || ih.includes(s.replace('&#39;', "'")), `invoice html has ${s}`);
+  }
+  assert.ok(ih.includes(LH.fmt(inv.total)), 'invoice shows the total');
+  assert.ok(!/delivery code|GSTIN/i.test(ih), 'no delivery code or GSTIN on the invoice');
+  assert.ok(tpl.invoiceHtml(LH, inv, { paid: false }).includes('PAYMENT PENDING') || tpl.invoiceHtml(LH, inv, { paid: false }).includes('PAYMENT DUE'));
+  const xs = tpl.invoiceHtml(LH, { ...inv, n: '<img src=x onerror=1>', nt: '<b>hi</b>' }, {});
+  assert.ok(!xs.includes('<img') && !xs.includes('<b>hi</b>'), 'invoice escapes customer text');
+  const it = tpl.invoiceText(LH, inv, { paid: true });
+  assert.ok(/9962419353/.test(it) && /maps\.app\.goo\.gl/.test(it) && /GST: Not applicable/.test(it) && it.includes(LH.fmt(inv.total)));
+  const done = lib.doneEmail(LH, inv);
+  assert.ok(done.html.includes('INVOICE') && done.text.includes('Invoice no: LH-AAAAAA'), 'completed email carries the invoice');
+  const dinv = { ...inv, svc: 'deliver', addr: '12 Lake View Road, near the temple', fee: 30, total: inv.total + 30 };
+  const dh = tpl.invoiceHtml(LH, dinv, { paid: false });
+  assert.ok(dh.includes('Delivery charge') && dh.includes('12 Lake View Road'), 'delivery invoice lists the charge and address');
+
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);
+  fs.writeFileSync(path.join(dir, 'invoice.html'), tpl.shell(LH, 'Invoice', tpl.invoiceHtml(LH, dinv, { paid: true })));
   fs.writeFileSync(path.join(dir, 'confirm.html'), lib.confirmEmail(LH, o, { prep: 12 }).html);
   fs.writeFileSync(path.join(dir, 'ready.html'), lib.readyEmail(LH, o).html);
   fs.writeFileSync(path.join(dir, 'report.html'), outbox[0].html);

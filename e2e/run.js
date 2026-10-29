@@ -330,6 +330,7 @@ async function until(fn, ms = 8000, step = 60) {
   /* ---------------- Delivery code (OTP) and manual close ---------------- */
   const toOut = async (o) => { for (const to of ['accepted', 'cooking', 'ready', 'out']) await act(A, o.id, to); };
   const dStatus = (id) => db.docs.get(`status/${id}`) || {};
+  const invoiceIn = (m, ...parts) => !!m && parts.every((p) => m.html.includes(p));
   const otpMsg = async () => (await A.page.textContent('#otpMsg')).trim();
   const tryCode = async (code) => { await A.page.fill('#otpIn', code); await A.page.click('#otpGo'); };
 
@@ -397,6 +398,8 @@ async function until(fn, ms = 8000, step = 60) {
     check('closed by code, recorded as such', dStatus(o.id).how === 'otp');
     check('card shows code verified', !!(await until(async () => /Code verified/.test(await card(A, o.id).textContent()), 4000)));
     check('delivered email arrives', (await nextEmail(em, /delivered/, t)) > 0);
+    const dm = has(em, /delivered/);
+    check('delivered email carries a paid invoice with the address and delivery charge', invoiceIn(dm, 'INVOICE', 'PAID', 'Delivery charge', '12 Lake View Road', '9962419353'));
     await s.page.click('#ordersBtn');
     check('code hidden after delivery', !(await s.page.locator('#ordersBody .otp-box').count()));
   });
@@ -426,6 +429,45 @@ async function until(fn, ms = 8000, step = 60) {
     check('takeaway order has no code', db.docs.get(`orders/${placed.upi}`).otp === undefined);
     const dineMails = world.emails.filter((x) => x.subject.includes(placed.dine) || x.subject.includes(placed.upi));
     check('no delivery code in dine-in or takeaway emails', dineMails.length > 0 && !dineMails.some((x) => /delivery code/i.test(`${x.text} ${x.html}`)));
+  });
+
+  /* ---------------- Invoice ---------------- */
+  await scenario('invoice: printable from admin and storefront, emailed on completion', async () => {
+    const em = 'inv@example.com';
+    const stubPrint = (h) => h.page.evaluate(() => { window.__inv = ''; window.print = () => { window.__inv = document.querySelector('#printArea').innerHTML; }; });
+    const invHas = (html, ...parts) => parts.every((p) => html.includes(p));
+    const s = await newShop();
+    const o = await place(s, { items: [0, 1], svc: 'take', pay: 'counter', em, name: 'Meera' });
+    await closeModal(s);
+    await card(A, o.id).waitFor();
+    await stubPrint(A);
+    await card(A, o.id).locator('[data-act="invoice"]').click();
+    let html = await A.page.evaluate(() => window.__inv);
+    check('admin invoice shows cafe name, phone and map link', invHas(html, "Laural's Haven Cafe", '9962419353', 'https://maps.app.goo.gl/XeqJJUZKzVbcAqjM8'));
+    check('invoice shows number, customer and total', invHas(html, 'INVOICE', o.id, 'Meera', LH.fmt(db.docs.get(`orders/${o.id}`).total)));
+    check('invoice states there is no GST', invHas(html, 'GST', 'Not applicable'));
+    check('open order invoice is marked due', html.includes('PAYMENT DUE'));
+    check('print area switches to the invoice layout', (await A.page.evaluate(() => document.querySelector('#printArea').className)) === 'inv');
+    await card(A, o.id).locator('[data-act="print"]').click();
+    check('kitchen ticket still prints in ticket layout', (await A.page.evaluate(() => document.querySelector('#printArea').className)) === '');
+    for (const to of ['accepted', 'cooking']) await act(A, o.id, to);
+    const t = await act(A, o.id, 'ready');
+    const mail = await until(() => world.emails.find((x) => x.to === em && x.t >= t && /ready/.test(x.subject)), 8000);
+    check('ready email carries the invoice, payment due at the counter', !!mail && invHas(mail.html, 'INVOICE', 'PAYMENT DUE', '9962419353', 'maps.app.goo.gl') && mail.text.includes(`Invoice no: ${o.id}`));
+    await act(A, o.id, 'completed');
+    await A.page.click('#nav [data-tab="history"]');
+    await A.page.fill('#histSearch', o.id);
+    await A.page.locator(`[data-inv="${o.id}"]`).click();
+    html = await A.page.evaluate(() => window.__inv);
+    check('history invoice for a finished order is marked paid', invHas(html, 'PAID', o.id));
+    await A.page.fill('#histSearch', '');
+    await A.page.click('#nav [data-tab="orders"]');
+    await stubPrint(s);
+    await s.page.click('#ordersBtn');
+    await s.page.locator(`[data-invoice="${o.id}"]`).click();
+    html = await s.page.evaluate(() => window.__inv);
+    check('customer can print the invoice from My orders', invHas(html, 'INVOICE', "Laural's Haven Cafe", '9962419353', 'PAID'));
+    check('invoice never includes a delivery code', !/delivery code/i.test(html));
   });
 
   /* ---------------- Closed store ---------------- */

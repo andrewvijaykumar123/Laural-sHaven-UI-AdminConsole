@@ -281,7 +281,7 @@ select{height:2.875rem}
   #nav button{min-height:2.75rem}
 }
 @media (min-width:1600px){:focus-visible{outline-width:3px;outline-offset:3px}}
-@media print{body>*:not(#printArea){display:none!important}#printArea{display:block!important;color:#000;font-family:monospace;width:17.5rem}}
+@media print{body>*:not(#printArea){display:none!important}#printArea{display:block!important;color:#000;font-family:monospace;width:17.5rem}#printArea.inv{width:auto;max-width:46rem;margin:0 auto;font-family:"Segoe UI",Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{margin:12mm}}
 #printArea{display:none}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 

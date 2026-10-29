@@ -427,9 +427,23 @@
   }
 
   function printTicket(o) {
+    $('#printArea').className = '';
     const lines = o.it.map(([id, q]) => `${q} x ${esc(ITEMS.get(id).name)}  ${fmt(ITEMS.get(id).price * q)}`).join('<br>');
     $('#printArea').innerHTML = `<h3>Laural's Haven</h3><p>${esc(o.id)} · ${new Date(o.ts).toLocaleString()}</p><hr>${lines}<hr><b>TOTAL ${fmt(o.total)}</b><p>${esc(o.n)} · ${esc(o.p)}<br>${o.svc === 'take' ? 'TAKEAWAY' : o.svc === 'deliver' ? `DELIVERY<br>${esc(o.addr)}<br>${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km` : `DINE-IN ${esc(o.tbl)}`}<br>${o.pay === 'upi' ? 'UPI' : o.svc === 'deliver' ? 'CASH ON DELIVERY' : 'PAY AT COUNTER'}${o.nt ? `<br>NOTE: ${esc(o.nt)}` : ''}</p>`;
     window.print();
+  }
+
+  /* Full invoice (no GST) for any order that was not rejected. */
+  function printInvoice(o) {
+    if (!o || !window.LHMail || statusOf(o.id) === 'rejected') return;
+    const paid = !!(meta[o.id] || {}).v || statusOf(o.id) === 'completed';
+    const area = $('#printArea');
+    area.className = 'inv';
+    area.innerHTML = window.LHMail.invoiceHtml(LH, o, { paid });
+    const prev = document.title;
+    document.title = `Invoice ${o.id}`;
+    window.print();
+    document.title = prev;
   }
 
   /* ---------- Delivery: rider location sharing and the live map ---------- */
@@ -580,7 +594,7 @@
         <div><span class="muted">Total and payment</span><b>${fmt(o.total)}</b> · ${pay}</div>
       </div>
       <div class="dv-rider">${rider}</div>
-      <div class="acts">${acts}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div>`;
+      <div class="acts">${acts}<button class="act sec" data-act="print" title="Print kitchen ticket">🖨</button>${s === 'rejected' ? '' : '<button class="act sec" data-act="invoice" title="Print invoice">🧾</button>'}</div>`;
   }
 
   function dvEnsureMap() {
@@ -666,7 +680,7 @@
       ${where}
       <ul class="oc-items">${o.it.map(([id, q]) => `<li><b>${q}×</b>${esc(ITEMS.get(id).name)}</li>`).join('')}</ul>
       ${o.nt ? `<div class="note">📝 ${esc(o.nt)}</div>` : ''}
-      <div class="oc-foot"><strong>${fmt(o.total)}</strong><div class="acts">${actionsFor(o, s).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('')}<button class="act sec" data-act="print" title="Print ticket">🖨</button></div></div>
+      <div class="oc-foot"><strong>${fmt(o.total)}</strong><div class="acts">${actionsFor(o, s).map(([to, label, cls]) => `<button class="act ${cls}" data-act="${to}">${label}</button>`).join('')}<button class="act sec" data-act="print" title="Print kitchen ticket">🖨</button>${s === 'rejected' ? '' : '<button class="act sec" data-act="invoice" title="Print invoice">🧾</button>'}</div></div>
       ${o.pay === 'upi' && !['rejected'].includes(s) ? `<button class="pay-btn" data-act="pay">${m.v ? 'Undo payment verified' : 'Mark payment verified'}</button>` : ''}
     </article>`;
   }
@@ -690,6 +704,7 @@
   function doAct(act, id) {
     if (act === 'reject') askReject(id);
     else if (act === 'print') printTicket(orders.get(id));
+    else if (act === 'invoice') printInvoice(orders.get(id));
     else if (act === 'pay') togglePay(id);
     else if (act === 'map') { dv.id = id; dv.moved = false; showTab('deliveries'); }
     else if (act === 'manual') askDeliveryClose(id, true);
@@ -815,7 +830,7 @@
       .filter((o) => (!st || statusOf(o.id) === st) && (!sv || o.svc === sv) && (!q || `${o.id} ${o.n} ${o.p} ${o.em} ${o.addr || ''}`.toLowerCase().includes(q))).slice(0, 300);
     $('#histBody').innerHTML = rows.length ? rows.map((o) => {
       const s = statusOf(o.id); const m = meta[o.id] || {};
-      return `<tr><td class="oid">${esc(o.id)}</td><td>${new Date(o.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+      return `<tr><td class="oid">${esc(o.id)}${s === 'rejected' ? '' : `<br><button class="btn ghost sm" data-inv="${esc(o.id)}" title="Print invoice">🧾 Invoice</button>`}</td><td>${new Date(o.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
         <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span>${o.svc === 'deliver' ? `<br><span class="muted">🛵 ${esc(o.addr)}</span>` : ''}</td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
         <td><b>${fmt(o.total)}</b>${o.svc === 'deliver' ? `<br><span class="muted">incl. ${o.fee ? fmt(o.fee) : 'free'} delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km</span>` : ''}</td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
@@ -892,6 +907,7 @@
     showTab(location.hash.slice(1));
     $('#histStatus').insertAdjacentHTML('beforeend', Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join(''));
     $('#histSearch').addEventListener('input', renderHistory);
+    $('#histBody').addEventListener('click', (e) => { const b = e.target.closest('[data-inv]'); if (b) printInvoice(orders.get(b.dataset.inv)); });
     $('#histStatus').addEventListener('change', renderHistory);
     $('#histSvc').addEventListener('change', renderHistory);
     const seg = (sel, set) => $(sel).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; $$('button', $(sel)).forEach((x) => x.classList.toggle('on', x === b)); set(b.dataset.v); });

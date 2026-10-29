@@ -22,6 +22,10 @@ Set the admin User UID in `firestore.rules` (`REPLACE_WITH_ADMIN_UID`; copy it f
 
 The rider's location is stored on the order's `status/{id}` document, which anyone holding the order id can read, and is erased when the order completes. `map.js`, `map.css` and `vendor/leaflet/` are copies of the storefront files and must stay identical. Map tiles come from the public OpenStreetMap servers; keep traffic light or switch to a tile provider for heavy use.
 
+## Invoices
+
+Every order that was not rejected has a professional invoice for Laural's Haven Cafe (phone and Google Maps link, invoice number = order id, itemised bill, delivery charge, amount in words; no GST). Staff print it with the receipt button on an order card, the Deliveries panel or Order history; customers print or save it as PDF from **My orders**, and it is included in the delivered/complete email. The layout lives in `mailtpl.js` (`invoiceHtml`); the cafe details and GST note are the `CAFE` and `TAX_NOTE` constants at the top. `mailtpl.js` must be identical in both repos.
+
 ## Instant order emails
 
 Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through Gmail SMTP. If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.
