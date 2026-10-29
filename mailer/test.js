@@ -211,6 +211,14 @@ const send = async (m) => { outbox.push(m); };
   const dh = tpl.invoiceHtml(LH, dinv, { paid: false });
   assert.ok(dh.includes('Delivery charge') && dh.includes('12 Lake View Road'), 'delivery invoice lists the charge and address');
 
+  // Customer feedback: ratings are clamped to whole 1-5 stars, unknown items and duplicates are dropped, comments are cleaned.
+  const item0 = LH.MENU[0].items[0].id, item1 = LH.MENU[0].items[1].id;
+  const fb = LH.validateFeedback({ id: 'LH-AAAAAA', n: 'Ravi', svc: 'take', sr: 4, ir: [[item0, 5], [item1, 9], ['nope', 3], [item0, 1]], c: '  Great <b>food</b>\n' });
+  assert.ok(fb && fb.sr === 4 && fb.ir.length === 1 && fb.ir[0][0] === item0 && fb.ir[0][1] === 5, 'feedback keeps valid product ratings only');
+  assert.ok(!/[<>\n]/.test(fb.c) && fb.c.startsWith('Great'), 'feedback comment is cleaned');
+  assert.strictEqual(LH.validateFeedback({ id: 'LH-AAAAAA', sr: 0, ir: [] }), null, 'a service rating is required');
+  assert.strictEqual(LH.validateFeedback({ id: 'bad', sr: 5, ir: [] }), null, 'feedback needs a valid order id');
+
   // write samples for a visual check
   const dir = path.join(__dirname, 'out'); fs.mkdirSync(dir, { recursive: true });
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);

@@ -470,6 +470,91 @@ async function until(fn, ms = 8000, step = 60) {
     check('invoice never includes a delivery code', !/delivery code/i.test(html));
   });
 
+  /* ---------------- Feedback ---------------- */
+  await scenario('feedback: star ratings from the storefront, captured in the admin console', async () => {
+    const finish = async (id) => { for (const to of ['accepted', 'cooking', 'ready', 'completed']) await act(A, id, to); };
+    const rateTry = (s, id) => s.page.evaluate((x) => { const ord = window.__lh.orders.find((y) => y.id === x); return window.LH.publishFeedback(ord, { sr: 5, ir: [] }).then(() => 'sent', (e) => e.code || e.message); }, id);
+    const fillRate = async (s, { sr, items = {}, text = '' }) => {
+      if (sr) await s.page.click(`#modalCard .stars[data-key="sr"] [data-n="${sr}"]`);
+      for (const [item, n] of Object.entries(items)) await s.page.click(`#modalCard .stars[data-key="it:${item}"] [data-n="${n}"]`);
+      if (text) await s.page.fill('#fbText', text);
+    };
+    const openRate = async (s, id) => { await s.page.locator(`[data-rate="${id}"]`).click(); await s.page.waitForSelector('#modal:not([hidden]) #fbSend'); };
+
+    const s = await newShop();
+    const o = await place(s, { items: [0, 1], svc: 'take', name: 'Ravi' });
+    await closeModal(s);
+    await s.page.click('#ordersBtn');
+    check('no rating button before the order is completed', (await s.page.locator('[data-rate]').count()) === 0);
+    const early = await rateTry(s, o.id);
+    check('rules refuse feedback before completion', early === 'permission-denied' && !db.docs.has(`feedback/${o.id}`), String(early));
+    await card(A, o.id).waitFor();
+    await finish(o.id);
+    await s.page.waitForSelector(`[data-rate="${o.id}"]`);
+    await openRate(s, o.id);
+    check('rating form has stars for the service and each product', (await s.page.locator('#modalCard .stars').count()) === 3);
+    await s.page.click('#fbSend');
+    check('service rating is required', (await s.page.textContent('#fbMsg')).includes('rate our service') && !db.docs.has(`feedback/${o.id}`));
+    await fillRate(s, { sr: 4, items: { [I(0)]: 5, [I(1)]: 2 }, text: 'Tasty, but slow <b>service</b>' });
+    check('chosen stars are marked', (await s.page.locator('#modalCard .stars[data-key="sr"] button.on').count()) === 4 && (await s.page.getAttribute(`#modalCard .stars[data-key="it:${I(0)}"] [data-n="5"]`, 'aria-checked')) === 'true');
+    await s.page.click('#fbSend');
+    const doc = await until(() => db.docs.get(`feedback/${o.id}`));
+    check('feedback is stored with service and product ratings', !!doc && doc.sr === 4 && doc.ir.includes(`${I(0)}:5`) && doc.ir.includes(`${I(1)}:2`) && doc.n === 'Ravi' && doc.svc === 'take');
+    check('comment is stored without markup', !!doc && doc.c.startsWith('Tasty, but slow') && !/[<>]/.test(doc.c));
+    check('customer sees thanks and no rating button', !!(await until(() => s.page.locator(`.order-card[data-id="${o.id}"] .fb-done`).count())) && (await s.page.locator(`[data-rate="${o.id}"]`).count()) === 0 && (await s.page.isHidden('#modal')));
+    check('feedback cannot be sent twice for an order', (await rateTry(s, o.id)) === 'permission-denied');
+
+    await A.page.waitForSelector('#navFb:not([hidden])');
+    check('admin nav shows one new feedback', (await A.page.textContent('#navFb')).trim() === '1');
+    await A.page.click('#nav [data-tab="feedback"]');
+    const kp = await A.page.textContent('#fbKpis');
+    check('admin summary shows service and product averages', kp.includes('4.0 \u2605') && kp.includes('3.5 \u2605'), kp.replace(/\s+/g, ' ').slice(0, 120));
+    const list = await A.page.textContent('#fbList');
+    check('admin sees the order, customer, comment and product ratings', list.includes(o.id) && list.includes('Ravi') && list.includes('Tasty, but slow') && list.includes(`${LH.ITEMS.get(I(0)).name}`) && list.includes('5\u2605') && list.includes('2\u2605'));
+    check('product ranking lists both products', (await A.page.locator('#fbItems .rank-row').count()) === 2);
+    check('opening the tab clears the new badge', await A.page.isHidden('#navFb'));
+    await A.page.selectOption('#fbRating', '5');
+    check('rating filter hides other ratings', (await A.page.locator('#fbList .fbcard').count()) === 0);
+    await A.page.selectOption('#fbRating', '4');
+    check('rating filter shows matching feedback', (await A.page.locator('#fbList .fbcard').count()) === 1);
+    await A.page.selectOption('#fbRating', '');
+
+    const s2 = await newShop();
+    const o2 = await place(s2, { items: [2], svc: 'dine', name: 'Divya' });
+    await closeModal(s2);
+    await s2.page.click('#ordersBtn');
+    await A.page.click('#nav [data-tab="orders"]');
+    await card(A, o2.id).waitFor();
+    await finish(o2.id);
+    await A.page.click('#nav [data-tab="feedback"]');
+    await s2.page.waitForSelector(`[data-rate="${o2.id}"]`);
+    await openRate(s2, o2.id);
+    db.noFeedbackRules = true;
+    await fillRate(s2, { sr: 2, text: 'Cold and late' });
+    await s2.page.click('#fbSend');
+    check('unpublished rules show a clear message and keep the form', !!(await until(async () => /could not save/i.test(await s2.page.textContent('#fbMsg')), 5000)) && !db.docs.has(`feedback/${o2.id}`));
+    db.noFeedbackRules = false;
+    await s2.page.click('#fbSend');
+    check('feedback can be resent once the rules allow it', !!(await until(() => db.docs.get(`feedback/${o2.id}`))));
+    check('low rating is flagged for attention in admin', !!(await until(() => A.page.locator('#fbList .fbcard.low').count())));
+    const kp2 = (await A.page.textContent('#fbKpis')).replace(/\s+/g, '');
+    check('admin summary updates live', kp2.includes('Servicerating3.0\u2605') && kp2.includes('Needsattention1'), kp2.slice(0, 140));
+    await A.page.selectOption('#fbRating', 'low');
+    check('needs-attention filter shows only the low rating', (await A.page.locator('#fbList .fbcard').count()) === 1 && (await A.page.textContent('#fbList')).includes('Divya'));
+    await A.page.selectOption('#fbRating', '');
+    await A.page.selectOption('#fbSvc', 'take');
+    check('service filter works', (await A.page.locator('#fbList .fbcard').count()) === 1 && (await A.page.textContent('#fbList')).includes('Ravi'));
+    await A.page.selectOption('#fbSvc', '');
+    await A.page.fill('#fbSearch', 'cold and');
+    check('search finds a comment', (await A.page.locator('#fbList .fbcard').count()) === 1);
+    await A.page.fill('#fbSearch', '');
+    await A.page.reload();
+    await A.page.waitForSelector('#app:not([hidden])');
+    await A.page.click('#nav [data-tab="feedback"]');
+    check('feedback survives an admin reload', !!(await until(async () => (await A.page.locator('#fbList .fbcard').count()) === 2, 5000)));
+    await A.page.click('#nav [data-tab="orders"]');
+  });
+
   /* ---------------- Closed store ---------------- */
   await scenario('closed kitchen and sold-out items', async () => {
     const s = await newShop();
@@ -555,7 +640,7 @@ async function until(fn, ms = 8000, step = 60) {
     for (const vp of [{ width: 390, height: 800, mobile: true }, { width: 1024, height: 768 }]) {
       const h = await world.open('admin', { viewport: { width: vp.width, height: vp.height }, mobile: vp.mobile, geo: geoAt(1) });
       await world.login(h);
-      for (const tab of ['orders', 'deliveries', 'analytics', 'menu', 'history', 'settings']) {
+      for (const tab of ['orders', 'deliveries', 'analytics', 'menu', 'history', 'feedback', 'settings']) {
         await h.page.evaluate((t) => document.querySelector(`#nav [data-tab="${t}"]`).click(), tab);
         await sleep(150);
         const ov = await overflow(h);

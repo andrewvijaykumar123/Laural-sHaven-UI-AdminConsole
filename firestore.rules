@@ -79,6 +79,27 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Customer feedback: one per order, created once by the customer who placed it after it is completed (no edits). Only the admin reads it.
+    function validFeedback(d, id) {
+      let order = get(/databases/$(database)/documents/orders/$(id)).data;
+      return d.keys().hasOnly(['id', 'uid', 'at', 'n', 'svc', 'sr', 'ir', 'c'])
+        && d.keys().hasAll(['id', 'uid', 'at', 'n', 'svc', 'sr', 'ir'])
+        && d.id == id
+        && d.uid == request.auth.uid && d.uid == order.uid
+        && d.at == request.time
+        && d.n == order.n && d.svc == order.svc
+        && get(/databases/$(database)/documents/status/$(id)).data.get('s', '') == 'completed'
+        && d.sr is int && d.sr >= 1 && d.sr <= 5
+        && d.ir is list && d.ir.size() <= 60
+        && (!('c' in d) || (d.c is string && d.c.size() <= 300 && !d.c.matches('.*[<>].*')));
+    }
+
+    match /feedback/{id} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && id.matches('LH-[A-Z0-9]{6,10}') && validFeedback(request.resource.data, id);
+      allow update, delete: if isAdmin();
+    }
+
     // Readable by id only (no listing): lets a customer follow their order without exposing personal data.
     match /status/{id} {
       allow get: if signedIn();

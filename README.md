@@ -26,13 +26,18 @@ The rider's location is stored on the order's `status/{id}` document, which anyo
 
 Every order that was not rejected has a professional invoice for Laural's Haven Cafe (phone and Google Maps link, invoice number = order id, itemised bill, delivery charge, amount in words; no GST). Staff print it with the receipt button on an order card, the Deliveries panel or Order history; customers print or save it as PDF from **My orders**, and it is included in the delivered/complete email. The layout lives in `mailtpl.js` (`invoiceHtml`); the cafe details and GST note are the `CAFE` and `TAX_NOTE` constants at the top. `mailtpl.js` must be identical in both repos.
 
+## Customer feedback
+
+Once an order is completed, the customer sees **Rate your order** in My orders on the storefront: 1 to 5 stars for the service, optional stars for each product they ordered, and an optional comment (300 characters). The **Feedback** tab shows the average service and product ratings, how the service ratings are spread, every product ranked by average stars, and each response with the order, customer, comment and product ratings. Filter by rating, service type or comments, or search by order ID, name, phone or comment. Ratings of 1 or 2 stars are flagged as needing attention, and new feedback shows a badge and a toast.
+
+Feedback is stored in `feedback/{orderId}` (one per order, created once by the customer who placed it, only after the order is completed; only the admin can read it). Republish `firestore.rules` for it to work; until then the customer sees a "could not save" message and the Feedback tab shows a note. Feedback is kept when you clear the board, but a customer can no longer rate an order once it has been cleared.
 ## Instant order emails
 
 Customers get an email within a few seconds when their order is received, confirmed, ready (or out for delivery), delivered and when it cannot be accepted. The admin console that is open sends them: it plans the next email from the order status (mailtpl.js), claims it in Firestore (mailq/{order}_{key}, so two open consoles never send twice) and asks the Cloudflare Worker (worker/relay.js, POST /send) to deliver it through Gmail SMTP. If the Worker cannot send (not set up, offline, rules missing), the console falls back to the GitHub Actions mailer (mailer/, about a minute, plus a 15-minute schedule as a safety net) and the Settings tab says so.
 
 One-time setup:
 
-1. Republish irestore.rules (adds the mail and mailq collections).
+1. Republish `firestore.rules` (adds the mail and mailq collections).
 2. In Cloudflare, redeploy the Worker with the contents of worker/relay.js and add the secret GMAIL_APP_PASSWORD (a Gmail app password for the sender account). The existing GH_TOKEN secret stays for the fallback.
 3. Keep the admin console open on at least one device while the cafe takes orders; emails are sent from there.
 

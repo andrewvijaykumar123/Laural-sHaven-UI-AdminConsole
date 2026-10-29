@@ -34,11 +34,28 @@ class Db {
     return true;
   }
 
+  // Mirrors validFeedback() in firestore.rules: the caller's own, completed order; one rating 1-5; optional short comment.
+  validFeedback(d, id, uid) {
+    const order = this.docs.get(`orders/${id}`);
+    const st = this.docs.get(`status/${id}`);
+    if (!order || !st || st.s !== 'completed') return false;
+    const keys = Object.keys(d);
+    if (keys.some((k) => !['id', 'uid', 'at', 'n', 'svc', 'sr', 'ir', 'c'].includes(k)) || !['id', 'uid', 'at', 'n', 'svc', 'sr', 'ir'].every((k) => k in d)) return false;
+    if (d.id !== id || d.uid !== uid || d.uid !== order.uid || !d.at || !d.at.__serverTs || d.n !== order.n || d.svc !== order.svc) return false;
+    if (!Number.isInteger(d.sr) || d.sr < 1 || d.sr > 5 || !Array.isArray(d.ir) || d.ir.length > 60) return false;
+    return !('c' in d) || (typeof d.c === 'string' && d.c.length <= 300 && !/[<>]/.test(d.c));
+  }
+
   allowed(op, p, uid, data) {
     const [col, id] = p.split('/');
     if (this.noMailRules && (col === 'mail' || col === 'mailq')) return false; // simulates firestore.rules not yet republished
+    if (this.noFeedbackRules && col === 'feedback') return false;
     const admin = uid === ADMIN_UID;
     const signedIn = !!uid;
+    if (col === 'feedback') {
+      if (op === 'create') return signedIn && /^LH-[A-Z0-9]{6,10}$/.test(id) && this.validFeedback(data, id, uid);
+      return admin;
+    }
     if (col === 'orders') {
       if (op === 'create') return signedIn && this.cfg().open !== false && /^LH-[A-Z0-9]{6,10}$/.test(id) && this.validOrder(data, id, uid);
       return admin;

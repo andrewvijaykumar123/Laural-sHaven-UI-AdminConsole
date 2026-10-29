@@ -65,6 +65,7 @@
     try { await LH.admin.signOut(); } catch (e) { /* ignore */ }
     store.del('lastActive');
     store.del('orders');
+    store.del('fbk');
     location.reload();
   }
   $('#lockBtn').addEventListener('click', lock);
@@ -88,7 +89,11 @@
   let draft = null;
   let draftTimer = null;
   const fresh = new Set();
-
+  const feedback = new Map();
+  let fbErr = '';
+  let fbSeen = Number(store.get('fbSeen', 0)) || 0;
+  let fbNewSince = fbSeen;
+  const saveFeedback = () => store.set('fbk', [...feedback.values()].sort((a, b) => b.ts - a.ts).slice(0, 500));
   const saveOrders = () => store.set('orders', [...orders.values()].sort((a, b) => b.ts - a.ts).slice(0, 1500));
   const saveMeta = () => store.set('meta', meta);
   const statusOf = (id) => (meta[id] && meta[id].s) || 'pending';
@@ -109,6 +114,7 @@
     meta = store.get('meta', {});
     store.get('orders', []).forEach((o) => { const v = LH.validateOrder(o); if (v && v.ts > clearTs) orders.set(v.id, v); });
     draft = readDraft();
+    store.get('fbk', []).forEach((x) => { const f = LH.validateFeedback(x); if (f) feedback.set(f.id, f); });
 
     buildMenuAdmin();
     wireUI();
@@ -118,6 +124,7 @@
     setInterval(rideTick, 5000);
     LH.connect('orders');
     LH.connect('ops');
+    LH.connect('feedback');
     setInterval(() => { if (!document.hidden) renderBoard(); }, 30000);
     // A new order that nobody has accepted keeps chiming once a minute (for up to 30 minutes) so it is never missed.
     setInterval(() => {
@@ -170,6 +177,15 @@
   });
   LH.on('cfg', () => { if (!draftTimer) { draft = readDraft(); renderConfig(); } });
   LH.on('relay', renderConn);
+  LH.on('feedback', (f) => {
+    const old = feedback.get(f.id);
+    if (old && old.ts === f.ts && old.sr === f.sr && old.c === f.c) return;
+    feedback.set(f.id, f);
+    saveFeedback();
+    if (!old && Date.now() - f.ts < 3 * 60 * 1000) { chime(); toast(`New feedback ${f.id} · ${f.n} · ${f.sr} of 5 stars`, f.sr <= 2 ? 'bad' : 'new'); }
+    scheduleRender();
+  });
+  LH.on('fbsync', ({ ok, code }) => { fbErr = ok ? '' : code; renderFbState(); });
 
   let renderQueued = false;
   function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; renderAll(); }); }
@@ -848,6 +864,63 @@
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
+  /* ---------- Customer feedback ---------- */
+  const starStr = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+  const SVC_LABEL = { dine: 'Dine-in', take: 'Takeaway', deliver: 'Delivery' };
+  const avgOf = (arr) => (arr.length ? arr.reduce((s, n) => s + n, 0) / arr.length : 0);
+
+  function markFbSeen() {
+    const top = Math.max(0, ...[...feedback.values()].map((f) => f.ts));
+    if (top > fbSeen) { fbSeen = top; store.set('fbSeen', fbSeen); }
+  }
+
+  function renderFbBadge() {
+    const n = [...feedback.values()].filter((f) => f.ts > fbSeen).length;
+    const el = $('#navFb');
+    el.hidden = !n; el.textContent = n;
+  }
+
+  function renderFbState() {
+    const el = $('#fbState');
+    if (!el) return;
+    el.hidden = !fbErr;
+    el.textContent = fbErr === 'permission-denied' ? 'Feedback is not available yet. Publish the updated Firestore rules (firestore.rules) in the Firebase Console, then reload this page.' : fbErr ? 'Reconnecting to customer feedback...' : '';
+  }
+
+  function renderFeedback() {
+    const all = [...feedback.values()].sort((a, b) => b.ts - a.ts);
+    const items = {};
+    all.forEach((f) => f.ir.forEach(([id, n]) => { (items[id] || (items[id] = [])).push(n); }));
+    const itemRatings = Object.values(items).flat();
+    const svcAvg = avgOf(all.map((f) => f.sr));
+    $('#fbKpis').innerHTML = [
+      kpi('Service rating', all.length ? `${svcAvg.toFixed(1)} ★` : '–', `${all.length} response${all.length === 1 ? '' : 's'}`, '#fbbf24'),
+      kpi('Product rating', itemRatings.length ? `${avgOf(itemRatings).toFixed(1)} ★` : '–', `${itemRatings.length} product rating${itemRatings.length === 1 ? '' : 's'}`, '#fb923c'),
+      kpi('Comments', all.filter((f) => f.c).length, 'written by customers', '#60a5fa'),
+      kpi('Needs attention', all.filter((f) => f.sr <= 2).length, 'service rated 1 or 2 stars', '#f87171'),
+      kpi('New', all.filter((f) => f.ts > fbNewSince).length, 'since you last looked', '#34d399')
+    ].join('');
+    $('#fbDist').innerHTML = rank([5, 4, 3, 2, 1].map((s) => [`${s} star${s > 1 ? 's' : ''}`, all.filter((f) => f.sr === s).length]), (v) => v);
+    const rows = Object.entries(items).map(([id, a]) => [id, avgOf(a), a.length]).sort((a, b) => b[1] - a[1] || b[2] - a[2]);
+    $('#fbItems').innerHTML = rows.length ? `<div class="rank fb-rank">${rows.map(([id, avg, n]) => `<div class="rank-row"><span>${ITEMS.get(id).icon} ${esc(ITEMS.get(id).name)}</span><b>${avg.toFixed(1)} ★ <small class="muted">(${n})</small></b><div class="meter"><i style="width:${(avg / 5 * 100).toFixed(1)}%"></i></div></div>`).join('')}</div>` : '<p class="muted">No product ratings yet.</p>';
+
+    const q = $('#fbSearch').value.trim().toLowerCase();
+    const rt = $('#fbRating').value, sv = $('#fbSvc').value, only = $('#fbShow').value === 'comments';
+    const shown = all.filter((f) => (!rt || (rt === 'low' ? f.sr <= 2 : f.sr === Number(rt))) && (!sv || f.svc === sv) && (!only || f.c)
+      && (!q || `${f.id} ${f.n} ${f.c} ${(orders.get(f.id) || {}).p || ''}`.toLowerCase().includes(q)));
+    $('#fbCount').textContent = all.length ? `${shown.length} of ${all.length}` : '';
+    $('#fbList').innerHTML = shown.length ? shown.slice(0, 200).map((f) => {
+      const o = orders.get(f.id);
+      return `<article class="fbcard ${f.sr <= 2 ? 'low' : ''}">
+        <div class="fb-top"><span class="oid">${esc(f.id)}</span><span class="fb-stars" role="img" aria-label="Service rating ${f.sr} out of 5">${starStr(f.sr)}</span>${f.ts > fbNewSince ? '<span class="chip ok">New</span>' : ''}<span class="muted fb-date">${new Date(f.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></div>
+        <div class="fb-who"><b>${esc(f.n)}</b><span class="chip">${SVC_LABEL[f.svc]}</span>${o ? `<a href="tel:${esc(o.p)}">${esc(o.p)}</a>` : ''}</div>
+        ${f.c ? `<p class="fb-text">“${esc(f.c)}”</p>` : ''}
+        ${f.ir.length ? `<div class="fb-items">${f.ir.map(([id, n]) => `<span class="fb-chip ${n <= 2 ? 'low' : ''}" title="${n} out of 5">${ITEMS.get(id).icon} ${esc(ITEMS.get(id).name)} <b>${n}★</b></span>`).join('')}</div>` : ''}
+      </article>`;
+    }).join('') : `<p class="muted" style="padding:24px;text-align:center">${all.length ? 'No feedback matches these filters.' : 'No feedback yet. Customers can rate a completed order from My orders on the storefront.'}</p>`;
+    renderFbState();
+  }
+
   /* ---------- Menu and store settings ---------- */
   function buildMenuAdmin() {
     $('#menuAdmin').innerHTML = MENU.map((c) => `<section class="mcat" data-cat="${c.id}"><header><span style="font-size:1.5rem">${c.icon}</span><h3>${esc(c.name)}</h3>
@@ -886,10 +959,10 @@
     $('#connInfo').innerHTML = row('Orders channel', i.orders ? '🟢 connected' : '🟠 reconnecting') + row('Status channel', i.ops ? '🟢 connected' : '🟠 reconnecting') + row('Queued messages', i.queued || 0) + row('Orders stored', orders.size);
   }
 
-  function renderAll() { renderKpis(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); if ($('#tab-deliveries').classList.contains('on')) renderDeliveries(); }
+  function renderAll() { renderKpis(); renderFbBadge(); renderBoard(); renderConfig(); renderConn(); if ($('#tab-analytics').classList.contains('on')) renderAnalytics(); if ($('#tab-history').classList.contains('on')) renderHistory(); if ($('#tab-deliveries').classList.contains('on')) renderDeliveries(); if ($('#tab-feedback').classList.contains('on')) { renderFeedback(); markFbSeen(); renderFbBadge(); } }
 
   /* ---------- UI wiring ---------- */
-  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], settings: ['Settings', 'Alerts, connection and data'] };
+  const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], feedback: ['Customer feedback', 'Star ratings and comments about orders, products and service'], settings: ['Settings', 'Alerts, connection and data'] };
   function showTab(name) {
     if (!TABS[name]) name = 'orders';
     $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
@@ -898,6 +971,7 @@
     if (name === 'analytics') renderAnalytics();
     if (name === 'history') renderHistory();
     if (name === 'deliveries') renderDeliveries();
+    if (name === 'feedback') { fbNewSince = fbSeen; renderFeedback(); markFbSeen(); renderFbBadge(); }
     history.replaceState(null, '', `#${name}`);
     if (started) scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -910,6 +984,8 @@
     $('#histBody').addEventListener('click', (e) => { const b = e.target.closest('[data-inv]'); if (b) printInvoice(orders.get(b.dataset.inv)); });
     $('#histStatus').addEventListener('change', renderHistory);
     $('#histSvc').addEventListener('change', renderHistory);
+    ['fbRating', 'fbSvc', 'fbShow'].forEach((id) => $(`#${id}`).addEventListener('change', renderFeedback));
+    $('#fbSearch').addEventListener('input', renderFeedback);
     const seg = (sel, set) => $(sel).addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; $$('button', $(sel)).forEach((x) => x.classList.toggle('on', x === b)); set(b.dataset.v); });
     seg('#boardSvc', (v) => { boardSvc = v; renderBoard(); });
     seg('#anSvc', (v) => { anSvc = v; renderAnalytics(); });

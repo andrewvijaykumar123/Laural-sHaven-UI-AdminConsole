@@ -290,3 +290,17 @@ select{height:2.875rem}
 .otp-in:focus{border-color:var(--accent);box-shadow:0 0 0 0.25rem rgba(124,156,255,.2);outline:none}
 .otp-msg{min-height:1.25rem;margin:0 0 0.5rem;color:var(--red);font-size:.86rem;text-align:center}
 .modal-card.shake{animation:shake .45s}
+
+/* Customer feedback */
+.fb-state{margin-bottom:1rem;padding:0.75rem 1rem;border-radius:0.875rem;border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.12);font-size:.88rem}
+.fb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(19rem,100%),1fr));gap:0.875rem}
+.fbcard{display:grid;gap:0.5rem;align-content:start;padding:1rem;border-radius:var(--radius);background:var(--card);border:1px solid var(--line)}
+.fbcard.low{border-color:rgba(248,113,113,.5)}
+.fb-top,.fb-who{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap}
+.fb-stars{color:var(--amber);letter-spacing:.1em;font-size:1.05rem}
+.fb-date{margin-left:auto}
+.fb-text{font-style:italic;line-height:1.5;overflow-wrap:anywhere}
+.fb-items{display:flex;flex-wrap:wrap;gap:0.375rem}
+.fb-chip{font-size:.78rem;padding:0.1875rem 0.625rem;border-radius:6.1875rem;background:var(--card2)}
+.fb-chip b{color:var(--amber)}.fb-chip.low b{color:var(--red)}
+.fb-rank{max-height:20rem;overflow:auto;padding-right:0.25rem}

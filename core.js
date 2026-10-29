@@ -207,6 +207,23 @@
     return out;
   }
 
+  /* Customer feedback on a finished order: one service rating, optional per-item ratings (1 to 5 stars) and a comment. */
+  const stars = (n) => { const v = Math.floor(Number(n)); return v >= 1 && v <= 5 ? v : 0; };
+  function validateFeedback(f) {
+    if (!f || !validId(f.id)) return null;
+    const sr = stars(f.sr);
+    if (!sr) return null;
+    const seen = new Set();
+    const ir = [];
+    (Array.isArray(f.ir) ? f.ir : []).slice(0, 60).forEach((x) => {
+      const id = Array.isArray(x) ? x[0] : x && x.id;
+      const n = stars(Array.isArray(x) ? x[1] : x && x.n);
+      if (ITEMS.has(id) && n && !seen.has(id)) { seen.add(id); ir.push([id, n]); }
+    });
+    let ts = Number(f.ts);
+    if (!Number.isFinite(ts) || ts > now() + 86400000) ts = now();
+    return { id: f.id, ts, n: clean(f.n, 40), svc: f.svc === 'take' ? 'take' : f.svc === 'deliver' ? 'deliver' : 'dine', sr, ir, c: clean(f.c, 300) };
+  }
 
   /* ---------- Config shared by the admin (store open, sold-out items, prep time) ---------- */
   let cfg = { open: true, oos: [], prep: 12, note: '', del: false, ts: 0 };
@@ -289,6 +306,24 @@
       await send();
     }
     return order;
+  }
+
+  const fromFeedbackDoc = (d) => validateFeedback({
+    id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, svc: d.svc, sr: d.sr, c: d.c,
+    ir: (Array.isArray(d.ir) ? d.ir : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
+  });
+
+  // One feedback per order (the rules refuse updates). The order must be the caller's own and already completed.
+  async function publishFeedback(order, f) {
+    const v = validateFeedback({ ...f, id: order && order.id, n: order && order.n, svc: order && order.svc });
+    if (!v) throw new Error('Invalid feedback');
+    const user = await ensureUser();
+    const { db } = firebase();
+    const FB = window.LH_FB;
+    await write(FB.setDoc(FB.doc(db, 'feedback', v.id), {
+      id: v.id, uid: user.uid, at: FB.serverTimestamp(), n: v.n, svc: v.svc, sr: v.sr, ir: v.ir.map(([id, n]) => `${id}:${n}`), ...(v.c ? { c: v.c } : {})
+    }));
+    return v;
   }
 
   const finalStatus = new Map();
@@ -406,6 +441,7 @@
     const retry = (k, e) => {
       mark(k, false);
       console.warn(`LH ${name} stream`, e && e.code ? e.code : e);
+      if (name === 'feedback') emit('fbsync', { ok: false, code: e && e.code ? e.code : 'error' });
       if (timer) return;
       timer = setTimeout(() => { timer = null; offs.splice(0).forEach((f) => { try { f(); } catch (x) { /* already closed */ } }); attach(); }, delay);
       delay = Math.min(delay * 2, 60000);
@@ -420,6 +456,20 @@
             synced('cfg', snap);
             if (snap.exists()) applyCfgDoc(snap.data());
           }, (e) => retry('cfg', e)));
+          return;
+        }
+        if (name === 'feedback') {
+          if (!(await adminUser())) throw new Error('Console is locked');
+          mark('fb', false);
+          offs.push(FB.onSnapshot(FB.query(FB.collection(firebase().db, 'feedback'), FB.orderBy('at', 'desc'), FB.limit(500)), MD, (snap) => {
+            synced('fb', snap);
+            if (!snap.metadata.fromCache) emit('fbsync', { ok: true });
+            snap.docChanges().forEach((ch) => {
+              if (ch.type === 'removed') return;
+              const f = fromFeedbackDoc({ ...ch.doc.data({ serverTimestamps: 'estimate' }), id: ch.doc.id });
+              if (f) emit('feedback', f);
+            });
+          }, (e) => retry('fb', e)));
           return;
         }
         if (!(await adminUser())) throw new Error('Console is locked');
@@ -437,7 +487,7 @@
           synced('status', snap);
           snap.docChanges().forEach((ch) => { if (ch.type !== 'removed') emitStatus(ch.doc.id, ch.doc.data()); });
         }, (e) => retry('status', e)));
-      } catch (e) { retry(name === 'ops' ? 'cfg' : 'orders', e); }
+      } catch (e) { retry(name === 'ops' ? 'cfg' : name === 'feedback' ? 'fb' : 'orders', e); }
     }
     attach();
   }
@@ -477,9 +527,9 @@
   window.LH = {
     UPI, MENU, ITEMS, STATUS, NEXT, nextFor, statusLabel,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
-    fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder,
+    fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder, validateFeedback,
     store, now, on, emit, init, connect, watch, flush,
-    publishOrder, publishAdmin, admin: adminAuth,
+    publishOrder, publishFeedback, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
     getRelay: () => ({ ...relayState, queued: inflight })
   };
