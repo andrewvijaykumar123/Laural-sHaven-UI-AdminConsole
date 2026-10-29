@@ -291,6 +291,7 @@
   /* ---------- Config shared by the admin (store open, sold-out items, prep time) ---------- */
   let cfg = { open: true, oos: [], prep: 12, note: '', del: false, ts: 0 };
   let lastClr = 0;
+  let lastWipe = 0;
   // Event bookings: the admin switches them on and publishes the time slots already taken (busy[date] = [[from, to], ...]).
   let evCfg = { on: false, busy: {}, ts: 0 };
 
@@ -423,6 +424,23 @@
     }
   }
 
+  // Deletes every order, rating, booking and email record, then tells all devices (config/store.wipe) to drop their saved copies.
+  async function wipeStorefront(ts) {
+    const FB = window.LH_FB;
+    const { db } = firebase();
+    await write(FB.setDoc(FB.doc(db, 'config', 'store'), { clr: ts, wipe: ts }, { merge: true }));
+    for (const col of ['orders', 'feedback', 'events', 'evstatus', 'status', 'mail', 'mailq']) {
+      for (;;) {
+        const snap = await FB.getDocs(FB.query(FB.collection(db, col), FB.limit(200)));
+        if (snap.empty) break;
+        const batch = FB.writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        if (snap.size < 200) break;
+      }
+    }
+  }
+
   async function publishAdmin(f) {
     const admin = await adminUser();
     if (!admin) throw new Error('Console is locked');
@@ -485,12 +503,15 @@
       return write(FB.setDoc(FB.doc(db, 'config', 'events'), { on: f.on === true, busy, ts }));
     }
     if (f.k === 'clr') return clearBoard(ts);
+    if (f.k === 'wipe') return wipeStorefront(ts);
     throw new Error('Unknown action');
   }
 
   function applyCfgDoc(d) {
     const clr = Number(d.clr) || 0;
     if (clr > lastClr) { lastClr = clr; emit('clear', { ts: clr }); }
+    const wipe = Number(d.wipe) || 0;
+    if (wipe > lastWipe) { lastWipe = wipe; emit('wipe', { ts: wipe }); }
     const ts = Number(d.ts) || 0;
     if (d.open === undefined || ts < cfg.ts) return;
     cfg = {

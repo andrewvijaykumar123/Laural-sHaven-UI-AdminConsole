@@ -855,6 +855,45 @@ async function until(fn, ms = 8000, step = 60) {
     check('lock returns to the sign-in form', await A.page.isVisible('#lock'));
   });
 
+  /* ---------------- Clear all storefront data ---------------- */
+  await scenario('clear all storefront data needs the owner password and empties every device', async () => {
+    const WIPED = ['orders/', 'feedback/', 'events/', 'evstatus/', 'status/', 'mail/', 'mailq/'];
+    const left = () => [...db.docs.keys()].filter((k) => WIPED.some((p) => k.startsWith(p))).length;
+    const ad = await newAdmin();
+    const s = await newShop();
+    const o = await place(s, { items: [0], svc: 'take', name: 'Meena', em: 'meena@example.com' });
+    await closeModal(s);
+    await card(ad, o.id).waitFor();
+    await s.page.click('#ordersBtn');
+    check('customer has a saved order before the wipe', (await s.page.locator('.order-card').count()) === 1);
+    check('storefront data exists before the wipe', left() >= 1);
+    await ad.page.click('#nav [data-tab="settings"]');
+    await ad.page.click('#wipeStore');
+    check('clearing storefront data asks for the owner password', await ad.page.isVisible('#ownerPw'));
+    await ad.page.fill('#ownerPw', 'wrong-password');
+    await ad.page.click('#confirmClear');
+    await ad.page.waitForSelector('#clearMsg:not(:empty)');
+    check('wrong owner password is refused for the wipe', /not the owner/.test(await ad.page.textContent('#clearMsg')));
+    const before = left();
+    await sleep(300);
+    check('nothing is deleted after a wrong password', left() >= before && before >= 1 && db.docs.has(`orders/${o.id}`));
+    await ad.page.fill('#ownerPw', world.OWNER_PASSWORD);
+    await ad.page.click('#confirmClear');
+    check('every storefront collection is emptied', !!(await until(() => left() === 0, 8000)), String(left()));
+    check('customer device forgets its saved orders', !!(await until(() => s.page.evaluate(() => window.__lh.orders.length === 0), 8000)));
+    check('customer order list shows nothing', !!(await until(async () => (await s.page.locator('.order-card').count()) === 0, 5000)));
+    await ad.page.click('#nav [data-tab="feedback"]');
+    check('admin feedback list is empty', (await ad.page.locator('#fbList .fbcard').count()) === 0);
+    await ad.page.click('#nav [data-tab="orders"]');
+    check('admin board is empty', (await ad.page.locator('.ocard').count()) === 0);
+    const s2 = await newShop();
+    const o2 = await place(s2, { items: [1], svc: 'take', name: 'Meena' });
+    await closeModal(s2);
+    check('new orders still work after the wipe', !!(await until(() => db.docs.get(`orders/${o2.id}`))) && !!(await until(() => card(ad, o2.id).count(), 5000)));
+    await ad.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(ad), 1);
+    for (const h of [s, s2]) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }
+  });
+
   /* ---------------- Email fallbacks ---------------- */
   await scenario('fallback when Firestore rules are not published', async () => {
     for (const h of world.pages.filter((x) => x.kind === 'admin')) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }

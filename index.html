@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261029j">
+  <link rel="stylesheet" href="styles.css?v=20261029k">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -156,7 +156,8 @@
             <button class="btn ghost sm" id="mailNow">Send pending emails now</button><button class="btn ghost sm" id="reportNow">Email today's report now</button></div></div>
           <div class="panel"><h3>Data</h3><p class="muted">Orders sync live through Firebase and are also cached on this device.</p>
             <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
-            <button class="btn danger sm" id="clearBoard">Clear board for everyone</button></div></div>
+            <button class="btn danger sm" id="clearBoard">Clear board for everyone</button>
+            <button class="btn danger sm" id="wipeStore">Clear all old storefront data</button></div></div>
           <div class="panel"><h3>Security</h3><ul class="list"><li>Orders are readable only by the signed-in admin account (Firestore security rules).</li><li>Customers can create orders but never read other customers' orders.</li><li>Session auto-locks after 90 minutes of inactivity.</li><li>Change the password in Firebase Console, Authentication.</li></ul></div>
         </div>
       </section>
@@ -169,9 +170,9 @@
 
   <script src="fb-config.js"></script>
   <script src="fb.js"></script>
-  <script src="core.js?v=20261029j"></script>
-  <script src="map.js?v=20261029j"></script>
-  <script src="mailtpl.js?v=20261029j"></script>
-  <script src="app.js?v=20261029j"></script>
+  <script src="core.js?v=20261029k"></script>
+  <script src="map.js?v=20261029k"></script>
+  <script src="mailtpl.js?v=20261029k"></script>
+  <script src="app.js?v=20261029k"></script>
 </body>
 </html>

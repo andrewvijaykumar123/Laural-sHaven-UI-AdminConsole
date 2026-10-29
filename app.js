@@ -88,7 +88,7 @@
   /* ---------- Data ---------- */
   let orders = new Map();
   let meta = {};
-  let clearTs = 0;
+  let clearTs = 0, wipeTs = 0;
   let started = false;
   let soundOn = store.get('sound', true);
   let draft = null;
@@ -122,11 +122,12 @@
     document.addEventListener('visibilitychange', checkIdle);
 
     clearTs = Number(store.get('clearTs', 0)) || 0;
+    wipeTs = Number(store.get('wipeTs', 0)) || 0;
     meta = store.get('meta', {});
     store.get('orders', []).forEach((o) => { const v = LH.validateOrder(o); if (v && v.ts > clearTs) orders.set(v.id, v); });
     draft = readDraft();
-    store.get('fbk', []).forEach((x) => { const f = LH.validateFeedback(x); if (f) feedback.set(f.id, f); });
-    store.get('evk', []).forEach((x) => { const v = LH.validateEvent(x); if (v) evk.set(v.id, v); });
+    store.get('fbk', []).forEach((x) => { const f = LH.validateFeedback(x); if (f && f.ts > wipeTs) feedback.set(f.id, f); });
+    store.get('evk', []).forEach((x) => { const v = LH.validateEvent(x); if (v && v.ts > wipeTs) evk.set(v.id, v); });
     evMeta = store.get('evmeta', {});
 
     buildMenuAdmin();
@@ -189,6 +190,14 @@
     [...orders.values()].forEach((o) => { if (o.ts <= ts) { orders.delete(o.id); delete meta[o.id]; } });
     saveOrders(); saveMeta(); scheduleRender();
   });
+  // Drops saved copies of feedback and bookings older than the storefront wipe.
+  function applyWipe(ts) {
+    if (ts > wipeTs) { wipeTs = ts; store.set('wipeTs', ts); }
+    [...feedback.values()].forEach((f) => { if (f.ts <= ts) feedback.delete(f.id); });
+    [...evk.values()].forEach((e) => { if (e.ts <= ts) { evk.delete(e.id); delete evMeta[e.id]; } });
+    saveFeedback(); saveEv(); saveEvMeta(); scheduleRender();
+  }
+  LH.on('wipe', ({ ts }) => applyWipe(ts));
   LH.on('cfg', () => { if (!draftTimer) { draft = readDraft(); renderConfig(); } });
   LH.on('relay', renderConn);
   LH.on('feedback', (f) => {
@@ -1197,13 +1206,13 @@
         return /TOO_MANY_ATTEMPTS/.test(m) ? 'busy' : r.status === 400 ? 'wrong' : 'error';
       } catch (err) { return 'error'; }
     };
-    $('#clearBoard').addEventListener('click', () => {
-      openModal(`<h3>Clear the board?</h3><p class="muted" style="margin-bottom:12px">All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.</p>
+    const askOwner = (title, text, label, run) => {
+      openModal(`<h3>${esc(title)}</h3><p class="muted" style="margin-bottom:12px">${esc(text)}</p>
         <form id="clearForm" autocomplete="off" novalidate>
           <label class="muted" for="ownerPw" style="display:block;margin-bottom:6px">Owner approval: enter the password of ${esc(OWNER_EMAIL)}</label>
           <input id="ownerPw" class="pw-in" type="password" autocomplete="off" placeholder="Owner password">
           <p class="otp-msg" id="clearMsg" role="alert"></p>
-          <button class="btn danger" id="confirmClear" type="submit" style="width:100%;margin-bottom:8px">Approve and clear everything</button>
+          <button class="btn danger" id="confirmClear" type="submit" style="width:100%;margin-bottom:8px">${esc(label)}</button>
         </form>
         <button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
       const pw = $('#ownerPw'), msg = $('#clearMsg'), go = $('#confirmClear');
@@ -1222,8 +1231,27 @@
           return;
         }
         closeModal();
-        try { await LH.publishAdmin({ k: 'clr' }); toast('Board cleared', 'ok'); } catch (err) { toast('Could not clear the board.', 'bad'); }
+        await run();
       });
-    });
+    };
+    $('#clearBoard').addEventListener('click', () => askOwner(
+      'Clear the board?',
+      'All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.',
+      'Approve and clear everything',
+      async () => { try { await LH.publishAdmin({ k: 'clr' }); toast('Board cleared', 'ok'); } catch (err) { toast('Could not clear the board.', 'bad'); } }
+    ));
+    $('#wipeStore').addEventListener('click', () => askOwner(
+      'Clear all old storefront data?',
+      'Permanently deletes every order, customer rating, event booking and email record, and empties the saved My orders and bookings lists on customers\' phones the next time they open the shop. The menu and settings are kept. This cannot be undone.',
+      'Approve and delete all data',
+      async () => {
+        try {
+          await LH.publishAdmin({ k: 'wipe' });
+          applyWipe(Date.now());
+          await publishEvCfg(evOn());
+          toast('Storefront data cleared', 'ok');
+        } catch (err) { toast('Could not clear all the data. Try again.', 'bad'); }
+      }
+    ));
   }
 })();
