@@ -839,7 +839,15 @@ async function until(fn, ms = 8000, step = 60) {
     check('board restores after reload', !!(await until(() => card(A, o.id).count(), 5000)));
     await A.page.click('#nav [data-tab="settings"]');
     await A.page.click('#clearBoard');
+    check('clear board asks for the owner password', await A.page.isVisible('#ownerPw'));
+    await A.page.fill('#ownerPw', 'wrong-password');
     await A.page.click('#confirmClear');
+    await A.page.waitForSelector('#clearMsg:not(:empty)');
+    check('wrong owner password is refused', /not the owner/.test(await A.page.textContent('#clearMsg')));
+    check('board is untouched after a wrong password', (await A.page.locator('.ocard').count()) >= 1);
+    await A.page.fill('#ownerPw', world.OWNER_PASSWORD);
+    await A.page.click('#confirmClear');
+    check('owner account was the one checked', world.ownerChecks.length === 2 && world.ownerChecks.every((e) => e === 'andrewvijaykumar123@gmail.com'));
     await A.page.click('#nav [data-tab="orders"]');
     check('clear board empties every card', !!(await until(async () => (await A.page.locator('.ocard').count()) === 0, 5000)));
     await A.page.click('#lockBtn2');

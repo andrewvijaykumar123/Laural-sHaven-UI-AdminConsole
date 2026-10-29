@@ -18,6 +18,7 @@ const ADMIN2_EMAIL = 'lauralshavenadmin@laurals-haven.invalid';
 const ADMIN2_PASSWORD = 'second-admin-test';
 const ADMIN_EMAIL = 'admin@laurals.test';
 const ADMIN_PASSWORD = 'correct-horse-battery';
+const OWNER_PASSWORD = 'owner-test-pw';
 const RELAY_HOST = 'lauralshaven.andrewvijaykumar123.workers.dev';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
 
@@ -186,7 +187,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
   const db = new Db(LH);
   const { chromium } = loadPlaywright();
   const world = {
-    LH, db, port, emails: [], dispatches: [], errors: [], pages: [], origin: `http://127.0.0.1:${port}`,
+    LH, db, port, emails: [], dispatches: [], ownerChecks: [], errors: [], pages: [], origin: `http://127.0.0.1:${port}`,
     relay: { mode: 'ok', smtpMs: 600 }, // ok | unset (501) | old (400) | down (network error)
     t0: Date.now()
   };
@@ -227,6 +228,13 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
     return route.fulfill({ status: 204, headers: cors });
   }
 
+  async function ownerCheckRoute(route) {
+    const b = route.request().postDataJSON() || {};
+    world.ownerChecks.push(b.email);
+    const ok = b.email === 'andrewvijaykumar123@gmail.com' && b.password === OWNER_PASSWORD;
+    return route.fulfill({ status: ok ? 200 : 400, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(ok ? { localId: 'owner' } : { error: { message: 'INVALID_LOGIN_CREDENTIALS' } }) });
+  }
+
   /* kind: 'shop' | 'admin'. Each page gets its own browser context, like a separate phone. */
   async function open(kind, opts = {}) {
     const ctx = await browser.newContext({
@@ -234,7 +242,12 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
       geolocation: opts.geo, permissions: opts.geo ? ['geolocation'] : [], serviceWorkers: 'block', acceptDownloads: true
     });
     await ctx.exposeBinding('__fbCall', ({ page }, op, a) => db.handle(page, op, a));
-    await ctx.route((u) => u.hostname !== '127.0.0.1', (route) => (new URL(route.request().url()).hostname === RELAY_HOST ? relayRoute(route) : route.abort()));
+    await ctx.route((u) => u.hostname !== '127.0.0.1', (route) => {
+      const host = new URL(route.request().url()).hostname;
+      if (host === RELAY_HOST) return relayRoute(route);
+      if (host === 'identitytoolkit.googleapis.com') return route.request().method() === 'OPTIONS' ? route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' } }) : ownerCheckRoute(route);
+      return route.abort();
+    });
     const page = await ctx.newPage();
     page.__lhid = ++pageSeq;
     page.setDefaultTimeout(8000);
@@ -266,7 +279,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
     server.close();
   }
 
-  Object.assign(world, { open, login, close, ADMIN_UID, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN2_PASSWORD });
+  Object.assign(world, { open, login, close, ADMIN_UID, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN2_PASSWORD, OWNER_PASSWORD });
   return world;
 }
 

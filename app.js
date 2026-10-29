@@ -8,6 +8,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const IDLE_MS = 90 * 60 * 1000;
+  const OWNER_EMAIL = 'andrewvijaykumar123@gmail.com';
   let lastTouch = 0;
   const touch = (force) => { const n = Date.now(); if (force || n - lastTouch > 10000) { lastTouch = n; store.set('lastActive', n); } };
   const idleLeft = () => Number(store.get('lastActive', 0)) + IDLE_MS - Date.now();
@@ -1184,13 +1185,45 @@
     $('#mailNow').addEventListener('click', (e) => runNow(e.currentTarget, 'mailer.yml', null, 'Email service started'));
     $('#reportNow').addEventListener('click', (e) => runNow(e.currentTarget, 'daily-report.yml', null, 'Report on its way'));
     renderMail();
+    // Checks the owner's password without touching the current sign-in.
+    const verifyOwner = async (password) => {
+      try {
+        const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(window.LH_FIREBASE.apiKey)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: OWNER_EMAIL, password, returnSecureToken: false })
+        });
+        if (r.ok) return 'ok';
+        const m = String(((await r.json().catch(() => ({}))).error || {}).message || '');
+        return /TOO_MANY_ATTEMPTS/.test(m) ? 'busy' : r.status === 400 ? 'wrong' : 'error';
+      } catch (err) { return 'error'; }
+    };
     $('#clearBoard').addEventListener('click', () => {
-      openModal('<h3>Clear the board?</h3><p class="muted" style="margin-bottom:16px">All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.</p><div class="reason-list"><button id="confirmClear" style="color:var(--red)">Yes, clear everything</button></div><button class="btn ghost" data-modal-close style="width:100%">Cancel</button>');
-      $('#modalCard').onclick = async (e) => {
-        if (!e.target.closest('#confirmClear')) return;
+      openModal(`<h3>Clear the board?</h3><p class="muted" style="margin-bottom:12px">All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.</p>
+        <form id="clearForm" autocomplete="off" novalidate>
+          <label class="muted" for="ownerPw" style="display:block;margin-bottom:6px">Owner approval: enter the password of ${esc(OWNER_EMAIL)}</label>
+          <input id="ownerPw" class="pw-in" type="password" autocomplete="off" placeholder="Owner password">
+          <p class="otp-msg" id="clearMsg" role="alert"></p>
+          <button class="btn danger" id="confirmClear" type="submit" style="width:100%;margin-bottom:8px">Approve and clear everything</button>
+        </form>
+        <button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
+      const pw = $('#ownerPw'), msg = $('#clearMsg'), go = $('#confirmClear');
+      $('#modalCard').onclick = null;
+      pw.focus();
+      pw.addEventListener('input', () => { msg.textContent = ''; });
+      $('#clearForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!pw.value) { msg.textContent = 'Enter the owner password.'; pw.focus(); return; }
+        go.disabled = true;
+        const res = await verifyOwner(pw.value);
+        if (res !== 'ok') {
+          go.disabled = false; pw.value = '';
+          msg.textContent = res === 'wrong' ? 'That is not the owner password.' : res === 'busy' ? 'Too many attempts. Try again later.' : 'Could not check the password. Check your connection.';
+          pw.focus();
+          return;
+        }
         closeModal();
         try { await LH.publishAdmin({ k: 'clr' }); toast('Board cleared', 'ok'); } catch (err) { toast('Could not clear the board.', 'bad'); }
-      };
+      });
     });
   }
 })();
