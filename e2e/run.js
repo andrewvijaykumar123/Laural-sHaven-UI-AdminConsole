@@ -1029,6 +1029,22 @@ async function until(fn, ms = 8000, step = 60) {
     await ad.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(ad), 1);
   });
 
+  await scenario('signed in as the owner: no password prompt for owner operations', async () => {
+    const ad = await world.open('admin', { viewport: DESKTOP, geo: geoAt(1) });
+    check('owner can sign in', await world.login(ad, 'andrewvijaykumar123@gmail.com', world.OWNER_PASSWORD));
+    await ad.page.waitForSelector('#livePill.up', { timeout: 10000 });
+    const checks0 = world.ownerChecks.length;
+    await ad.page.click('#nav [data-tab="settings"]');
+    await ad.page.click('#rcptBtn');
+    check('recipients open without a password', !!(await until(async () => (await ad.page.locator('#rcptIn').count()) === 1 && !(await ad.page.locator('#rcptIn').isDisabled()), 6000)) && !(await ad.page.isVisible('#ownerPw')));
+    await ad.page.click('#modalCard [data-modal-close]');
+    await ad.page.click('#clearBoard');
+    check('clear board asks to confirm but not for a password', (await ad.page.locator('#ownerPw').count()) === 0 && await ad.page.isVisible('#confirmClear'));
+    await ad.page.click('#modalCard [data-modal-close]');
+    check('no password check was made', world.ownerChecks.length === checks0);
+    await ad.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(ad), 1);
+  });
+
   /* ---------------- Email fallbacks ---------------- */
   await scenario('fallback when Firestore rules are not published', async () => {
     for (const h of world.pages.filter((x) => x.kind === 'admin')) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }

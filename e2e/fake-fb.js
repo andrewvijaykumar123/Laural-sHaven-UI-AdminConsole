@@ -9,7 +9,7 @@
 
   /* ----- auth ----- */
   const saved = () => { try { return JSON.parse(localStorage.getItem('fake.user')); } catch (e) { return null; } };
-  const mkUser = (u) => (u ? { uid: u.uid, isAnonymous: !!u.anon, getIdToken: async () => `fake-token-${u.uid}` } : null);
+  const mkUser = (u) => (u ? { uid: u.uid, isAnonymous: !!u.anon, email: u.email || null, getIdToken: async () => (u.email === 'andrewvijaykumar123@gmail.com' ? 'fake-owner-token' : `fake-token-${u.uid}`) } : null);
   const auth = { currentUser: mkUser(saved()) };
   const subs = new Set();
   const setUser = (u) => {
@@ -93,7 +93,7 @@
     signInWithEmailAndPassword: async (a, email, password) => {
       const r = await call('signin', { email, password });
       if (r.err) throw fail(r.err);
-      setUser({ uid: r.uid, anon: false });
+      setUser({ uid: r.uid, anon: false, email });
       return { user: auth.currentUser };
     },
     signOut: async () => setUser(null),

@@ -1378,7 +1378,18 @@
         return { res: /TOO_MANY_ATTEMPTS/.test(m) ? 'busy' : r.status === 400 ? 'wrong' : 'error' };
       } catch (err) { return { res: 'error' }; }
     };
-    const askOwner = (title, text, label, run, cls = 'danger') => {
+    // Signed in as the owner already: no password prompt (destructive actions still ask for a plain confirmation).
+    const askOwner = async (title, text, label, run, cls = 'danger') => {
+      const me = await LH.admin.current().catch(() => null);
+      if (me && String(me.email || '').toLowerCase() === OWNER_EMAIL) {
+        if (cls === 'primary') { await run(await me.getIdToken()); return; }
+        openModal(`<h3>${esc(title)}</h3><p class="muted" style="margin-bottom:12px">${esc(text)}</p>
+          <button class="btn ${cls}" id="confirmClear" type="button" style="width:100%;margin-bottom:8px">${esc(label)}</button>
+          <button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
+        $('#modalCard').onclick = null;
+        $('#confirmClear').addEventListener('click', async () => { closeModal(); await run(await me.getIdToken()); });
+        return;
+      }
       openModal(`<h3>${esc(title)}</h3><p class="muted" style="margin-bottom:12px">${esc(text)}</p>
         <form id="clearForm" autocomplete="off" novalidate>
           <label class="muted" for="ownerPw" style="display:block;margin-bottom:6px">Owner approval: enter the password of ${esc(OWNER_EMAIL)}</label>

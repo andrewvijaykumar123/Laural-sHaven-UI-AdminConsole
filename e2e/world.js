@@ -178,6 +178,7 @@ class Db {
         if (a.anon) return { uid: `anon-${++this.anon}` };
         if (a.email === ADMIN_EMAIL && a.password === ADMIN_PASSWORD) return { uid: ADMIN_UID };
         if (a.email === ADMIN2_EMAIL && a.password === ADMIN2_PASSWORD) return { uid: ADMIN2_UID };
+        if (a.email === 'andrewvijaykumar123@gmail.com' && a.password === OWNER_PASSWORD) return { uid: ADMIN_UID };
         return { err: { code: 'auth/invalid-credential', message: 'bad credentials' } };
       }
       if (op === 'set') { this.write([{ op: 'set', path: a.path, data: a.data, merge: a.merge }], a.uid); return {}; }
