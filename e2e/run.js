@@ -558,11 +558,11 @@ async function until(fn, ms = 8000, step = 60) {
     check('history invoice for a finished order is marked paid', invHas(html, 'PAID', o.id));
     await A.page.fill('#histSearch', '');
     await A.page.click('#nav [data-tab="orders"]');
-    await stubPrint(s);
     await s.page.click('#ordersBtn');
-    await s.page.locator(`[data-invoice="${o.id}"]`).click();
-    html = await s.page.evaluate(() => window.__inv);
-    check('customer can print the invoice from My orders', invHas(html, 'INVOICE', "Laural's Haven Cafe", '9962419353', 'PAID'));
+    const [dl] = await Promise.all([s.page.waitForEvent('download', { timeout: 10000 }), s.page.locator(`[data-invoice="${o.id}"]`).click()]);
+    const pdf = require('fs').readFileSync(await dl.path());
+    check('customer downloads the invoice as a PDF from My orders', dl.suggestedFilename() === `Invoice-${o.id}.pdf` && pdf.subarray(0, 5).toString('latin1') === '%PDF-' && pdf.subarray(-6).toString('latin1').includes('%%EOF'));
+    html = await s.page.evaluate((id) => window.LHMail.invoiceHtml(window.LH, window.__lh.orders.find((y) => y.id === id), { paid: true }), o.id);
     check('invoice never includes a delivery code', !/delivery code/i.test(html));
   });
 
