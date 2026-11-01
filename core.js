@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const UPI = { id: 'paytm.s1pl5v7@pty', name: "Laural's Haven" };
+  const UPI = { id: 'hanslin.lyndz-2@oksbi', name: 'Laural Hanslin' };
 
   /* ---------- Menu (source: Laural's Haven - Complete Cafe Menu.pdf, 85 items) ---------- */
   // diet: v = veg, e = egg, n = non-veg
