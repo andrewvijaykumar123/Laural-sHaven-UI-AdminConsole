@@ -1245,6 +1245,20 @@ async function until(fn, ms = 8000, step = 60) {
     check('a new product can be marked sold out', !!(await until(async () => (await s1.page.locator('.card[data-id="rasmalai-cup"].sold').count()) === 1, 5000)));
     await setSwitch(a, '[data-item="rasmalai-cup"]', true);
     await sleep(300);
+
+    await a.page.click('[data-edit-item="rasmalai-cup"]');
+    await a.page.click('#miDel');
+    await a.page.click('#delYes');
+    check('deleting a product removes it from the storefront', !!(await until(async () => (await s1.page.locator('.card[data-id="rasmalai-cup"]').count()) === 0)));
+    check('a deleted product leaves the admin menu list', !!(await until(async () => (await a.page.locator('[data-edit-item="rasmalai-cup"], [data-show-item="rasmalai-cup"]').count()) === 0)));
+    check('the deletion is saved in config/menu', (menuDoc().del || []).includes('rasmalai-cup'));
+    await a.page.click('#nav [data-tab="orders"]');
+    check('old orders with a deleted product still read correctly', (await card(a, o3.id).textContent()).includes('Rasmalai Bowl'));
+    await a.page.click('#nav [data-tab="menu"]');
+    await a.page.click(`[data-edit-item="${I(1)}"]`);
+    await a.page.click('#miDel');
+    await a.page.click('[data-modal-close]');
+    check('keeping a product on the confirm step does not delete it', !(menuDoc().del || []).includes(I(1)));
   });
 
   /* ---------------- Hostile or corrupted browser storage ---------------- */

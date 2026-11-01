@@ -1183,7 +1183,7 @@
       ${it.custom ? `<label class="muted" for="miName">Name</label><input class="pw-in" id="miName" maxlength="50" value="${esc(it.name)}">
       <label class="muted" for="miDiet">Type</label><select class="pw-in" id="miDiet">${dietOptions(it.diet)}</select>` : ''}
       <p class="muted" style="margin:4px 0 12px">New orders use the new price. Orders already placed keep the price they were placed at.</p>
-      <div class="acts"><button class="btn primary" id="miSave">Save</button><button class="btn ghost" id="miHide">Hide from menu</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+      <div class="acts"><button class="btn primary" id="miSave">Save</button><button class="btn ghost" id="miHide">Hide from menu</button><button class="btn ghost" id="miDel">Delete</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
     $('#miSave').onclick = async () => {
       const price = Math.floor(Number($('#miPrice').value));
       const name = it.custom ? $('#miName').value : '';
@@ -1194,6 +1194,16 @@
       toast(`${ITEMS.get(id).name} saved`, 'ok');
     };
     $('#miHide').onclick = async () => { if (await menuCall({ op: 'hide', id, hide: true }, `${it.name} is hidden from customers`)) closeModal(); };
+    $('#miDel').onclick = () => askDeleteItem(id);
+  }
+
+  function askDeleteItem(id) {
+    const it = ITEMS.get(id);
+    if (!it || it.gone) return;
+    openModal(`<h3>Delete ${it.icon} ${esc(it.name)}?</h3>
+      <p class="muted" style="margin:4px 0 12px">It is removed from the menu for good and cannot be restored here. Orders already placed keep its name and price. To take it off the menu for now, use Hide instead.</p>
+      <div class="acts"><button class="btn danger" id="delYes">Delete product</button><button class="btn ghost" data-modal-close>Keep it</button></div>`);
+    $('#delYes').onclick = async () => { if (await menuCall({ op: 'remove', id }, `${it.name} deleted`)) closeModal(); };
   }
 
   function askAddProduct(cat) {
@@ -1225,7 +1235,7 @@
 
   function buildMenuAdmin() {
     const hidden = LH.HIDDEN.length ? `<section class="mcat" data-cat="_hidden"><header><span style="font-size:1.5rem">🙈</span><h3>Hidden from customers</h3></header>
-      <div class="mgrid">${LH.HIDDEN.map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-show-item="${it.id}">Show</button></div>`).join('')}</div></section>` : '';
+      <div class="mgrid">${LH.HIDDEN.map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-show-item="${it.id}">Show</button><button class="btn ghost sm" data-del-item="${it.id}" aria-label="Delete ${esc(it.name)}">Delete</button></div>`).join('')}</div></section>` : '';
     $('#menuAdmin').innerHTML = MENU.map((c) => `<section class="mcat" data-cat="${c.id}"><header><span style="font-size:1.5rem">${c.icon}</span><h3>${esc(c.name)}</h3>
       <button class="btn ghost sm" data-add-in="${c.id}">+ Add product</button>${c.items.length ? `<button class="btn ghost sm" data-cat-out="${c.id}" style="margin-left:0">Toggle all</button>` : ''}</header>
       <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${fmt(it.price)}${it.custom ? ' · added by you' : ''}</small></div>
@@ -1336,6 +1346,8 @@
       if (add) { askAddProduct(add.dataset.addIn); return; }
       const show = e.target.closest('[data-show-item]');
       if (show) { menuCall({ op: 'hide', id: show.dataset.showItem, hide: false }, 'Item is back on the menu'); return; }
+      const del = e.target.closest('[data-del-item]');
+      if (del) { askDeleteItem(del.dataset.delItem); return; }
       const b = e.target.closest('[data-cat-out]');
       if (!b) return;
       const ids = MENU.find((c) => c.id === b.dataset.catOut).items.map((i) => i.id);

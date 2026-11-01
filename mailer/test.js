@@ -64,6 +64,9 @@ const send = async (m) => { outbox.push(m); };
   assert.ok(!LH.ITEMS.has('ghost') && !LH.ITEMS.has('no-cat'), 'unknown or invalid entries are ignored');
   LH.applyMenu({ ts: 1, px: { 'evil-item': ['1:50'] }, cats: [{ id: 'evil', name: 'Evil', icon: '<img src=x onerror=1>"\'`=&🍰', hue: 10, tagline: 'x' }], items: [{ id: 'evil-item', name: 'E', cat: 'evil', diet: 'v', icon: '"onmouseover="x' }] });
   assert.ok(!/[<>"'`=&]/.test(LH.MENU.find((c) => c.id === 'evil').icon + LH.ITEMS.get('evil-item').icon), 'menu icons cannot carry markup or attribute breakers');
+  LH.applyMenu({ ts: 3, del: ['veg-momos', 'nope'], hid: ['veg-momos'] });
+  assert.ok(LH.ITEMS.get('veg-momos').gone && !LH.MENU.some((c) => c.items.some((i) => i.id === 'veg-momos')) && LH.HIDDEN.length === 0, 'deleted items stay readable for old orders but are on neither list');
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T1, it: [['veg-momos', 1]] }).it.length, 1, 'an old order with a deleted item still validates');
   LH.applyMenu(null);
   assert.strictEqual(LH.HIDDEN.length, 0);
 

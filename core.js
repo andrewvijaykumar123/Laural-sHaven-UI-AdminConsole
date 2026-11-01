@@ -76,19 +76,19 @@
   const BASE_ITEMS = new Map(BASE.flatMap((c) => c.items).map((i) => [i.id, i]));
 
   /* The owner's changes live in config/menu: price history (px: id -> ["ts:price", ...]), hidden items (hid), extra categories (cats)
-     and extra products (items). ITEMS holds every item (hidden ones too, so old orders still read), MENU only what customers can order.
+     extra products (items) and deleted items (del). ITEMS holds every item (hidden and deleted ones too, so old orders still read), MENU only what customers can order.
      Both are rebuilt in place, so anything holding a reference to them sees the change. */
   const ITEMS = new Map();
   const MENU = [];
   const HIDDEN = [];
   const MENU_MAX = { items: 300, cats: 24, hist: 12, price: 9999 };
   const DIET_IDS = ['v', 'e', 'n'];
-  let menuDoc = { ts: 0, px: {}, hid: [], cats: [], items: [] };
+  let menuDoc = { ts: 0, px: {}, hid: [], del: [], cats: [], items: [] };
   const menuId = (s) => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(s);
   const okPrice = (p) => Number.isInteger(p) && p >= 1 && p <= MENU_MAX.price;
 
   function cleanMenu(d) {
-    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], cats: [], items: [] };
+    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], del: [], cats: [], items: [] };
     if (!d || typeof d !== 'object') return o;
     const catIds = new Set(BASE.map((c) => c.id));
     (Array.isArray(d.cats) ? d.cats : []).slice(0, MENU_MAX.cats).forEach((c) => {
@@ -112,20 +112,23 @@
     });
     Object.keys(px).forEach((id) => { if (itemIds.has(id)) o.px[id] = px[id]; });
     o.hid = [...new Set(Array.isArray(d.hid) ? d.hid : [])].filter((id) => itemIds.has(id));
+    o.del = [...new Set(Array.isArray(d.del) ? d.del : [])].filter((id) => itemIds.has(id));
     return o;
   }
 
   function applyMenu(d) {
     menuDoc = cleanMenu(d);
     const hid = new Set(menuDoc.hid);
+    const del = new Set(menuDoc.del);
     ITEMS.clear(); MENU.length = 0; HIDDEN.length = 0;
     const cats = [...BASE.map((c) => ({ ...c, items: [] })), ...menuDoc.cats.map((c) => ({ ...c, custom: true, items: [] }))];
     const byCat = new Map(cats.map((c) => [c.id, c]));
     const put = (it) => {
-      const item = { ...it, hide: hid.has(it.id) };
+      const item = { ...it, hide: hid.has(it.id) || del.has(it.id), gone: del.has(it.id) };
       const h = menuDoc.px[it.id];
       if (h) item.price = h[h.length - 1][1];
       ITEMS.set(item.id, item);
+      if (item.gone) return;
       (item.hide ? HIDDEN : byCat.get(item.cat).items).push(item);
     };
     BASE.forEach((c) => c.items.forEach(put));
@@ -599,7 +602,7 @@
 
   /* ---------- Menu editing (admin): every change rewrites config/menu whole ---------- */
   const wireMenu = (m) => ({
-    cats: m.cats, items: m.items, hid: m.hid,
+    cats: m.cats, items: m.items, hid: m.hid, del: m.del,
     px: Object.fromEntries(Object.entries(m.px).map(([id, h]) => [id, h.map(([t, p]) => `${t}:${p}`)]))
   });
   const uniqueId = (base, taken) => {
@@ -641,6 +644,11 @@
       const s = new Set(m.hid);
       if (o.hide) s.add(o.id); else s.delete(o.id);
       m.hid = [...s];
+    } else if (o.op === 'remove') {
+      const it = ITEMS.get(o.id);
+      if (!it || it.gone) throw new Error('Unknown item');
+      m.del = [...new Set([...m.del, o.id])];
+      m.hid = m.hid.filter((id) => id !== o.id);
     } else if (o.op === 'edit') {
       const it = m.items.find((x) => x.id === o.id);
       const name = clean(o.name, 50);
