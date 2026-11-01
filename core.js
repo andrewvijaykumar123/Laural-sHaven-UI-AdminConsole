@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const UPI = { id: 'hanslin.lyndz-2@oksbi', name: 'Laural Hanslin', aid: 'uGICAgIDDhLvxUw' };
+  const UPI = { phone: '9962419353' };
 
   /* ---------- Menu (source: Laural's Haven - Complete Cafe Menu.pdf, 85 items) ---------- */
   // diet: v = veg, e = egg, n = non-veg
