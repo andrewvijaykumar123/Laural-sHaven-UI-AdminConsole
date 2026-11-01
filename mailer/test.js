@@ -104,8 +104,8 @@ const send = async (m) => { outbox.push(m); };
   assert.ok(/cancelled/.test(cj.subject) && !/could not be accepted/.test(cj.subject) && /Nothing will be prepared/.test(cj.text) && cj.html.includes(po.id), 'cancellation email wording');
   assert.strictEqual(LH.statusLabel(po, 'rejected', LH.CANCEL.REASON), 'Cancelled');
   assert.strictEqual(LH.statusLabel(po, 'rejected', 'Item out of stock'), 'Rejected');
-  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 1000 }) > 170000 && LH.cancelLeft({ ts: Date.now() - 1000 }) <= 179000, true);
-  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 181000 }), 0);
+  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 1000 }) > 290000 && LH.cancelLeft({ ts: Date.now() - 1000 }) <= 299000, true);
+  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 301000 }), 0);
   assert.deepStrictEqual(lib.plan(LH, { ...po, em: '' }, { s: 'accepted' }, {}), []);
 
   // jumped straight to completed: just the invoice, once

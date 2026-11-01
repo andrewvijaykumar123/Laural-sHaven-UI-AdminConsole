@@ -164,8 +164,8 @@
   };
   const statusLabel = (o, s, r) => (s === 'rejected' && r === CANCEL.REASON ? 'Cancelled' : o && o.svc === 'deliver' && s === 'completed' ? 'Delivered' : (STATUS[s] || STATUS.pending).label);
 
-  /* A customer may cancel their own order for 3 minutes after placing it, until the kitchen starts cooking. firestore.rules enforces the same window (plus 5 s of slack). */
-  const CANCEL = { MS: 180000, REASON: 'Cancelled by customer', FROM: ['pending', 'accepted'] };
+  /* A customer may cancel their own order for 5 minutes after placing it, until the kitchen starts cooking. firestore.rules enforces the same window (plus 5 s of slack). */
+  const CANCEL = { MS: 300000, REASON: 'Cancelled by customer', FROM: ['pending', 'accepted'] };
   const cancelLeft = (o) => Math.max(0, CANCEL.MS - (Date.now() - (Number(o && o.ts) || 0)));
 
   /* ---------- Delivery area: straight-line distance from the cafe ---------- */

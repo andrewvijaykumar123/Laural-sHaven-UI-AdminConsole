@@ -72,10 +72,10 @@ class Db {
 
   eventsOn() { const c = this.docs.get('config/events'); return !!c && c.on === true; }
 
-  /* Mirrors cancelOk() and the status create/update rules: own order, 3 minutes (+5 s) after it was placed, still pending or accepted. */
+  /* Mirrors cancelOk() and the status create/update rules: own order, 5 minutes (+5 s) after it was placed, still pending or accepted. */
   validCancel(op, id, uid, d) {
     const order = this.docs.get(`orders/${id}`);
-    if (!order || !uid || order.uid !== uid || !(Date.now() < this.val(order.at) + 185000)) return false;
+    if (!order || !uid || order.uid !== uid || !(Date.now() < this.val(order.at) + 305000)) return false;
     if (Object.keys(d).some((k) => !['s', 'r', 'ts', 'u'].includes(k)) || !['s', 'r', 'ts', 'u'].every((k) => k in d)) return false;
     if (d.s !== 'rejected' || d.r !== 'Cancelled by customer' || !Number.isInteger(d.ts) || !Number.isInteger(d.u)) return false;
     return op === 'create' || ['pending', 'accepted'].includes((this.docs.get(`status/${id}`) || {}).s || 'pending');

@@ -267,7 +267,7 @@ async function until(fn, ms = 8000, step = 60) {
     check('Order again refills the cart', !!(await until(async () => (await s.page.textContent('#cartCount')) === '1' && (await s.page.locator('#cartDrawer.open').count()) === 1, 3000)));
   });
 
-  /* ---------------- Customer cancellation (3-minute window) ---------------- */
+  /* ---------------- Customer cancellation (5-minute window) ---------------- */
   const cxText = (h) => h.page.evaluate(() => { const b = document.querySelector('#modalCard [data-cx] .cx-time'); return b ? b.textContent : null; });
   await scenario('cancel: pending order inside the window', async () => {
     const em = 'cx1@example.com';
@@ -275,7 +275,7 @@ async function until(fn, ms = 8000, step = 60) {
     const o = await place(s, { items: [4], svc: 'dine', em });
     await card(A, o.id).waitFor();
     const t1 = await until(async () => (await cxText(s)) || null);
-    check('countdown box shows about 3:00', /^(3:00|2:5\d)$/.test(t1 || ''), t1);
+    check('countdown box shows about 5:00', /^(5:00|4:5\d)$/.test(t1 || ''), t1);
     await sleep(1600);
     const t2 = await cxText(s);
     check('countdown is ticking', !!t2 && t2 !== t1, `${t1} -> ${t2}`);
@@ -322,14 +322,14 @@ async function until(fn, ms = 8000, step = 60) {
     const s = await newShop();
     const o = await place(s, { items: [6], svc: 'dine', em: 'cx3@example.com' });
     await card(A, o.id).waitFor();
-    await s.page.evaluate((id) => { window.__lh.orders.find((x) => x.id === id).ts -= 176000; }, o.id);
+    await s.page.evaluate((id) => { window.__lh.orders.find((x) => x.id === id).ts -= 296000; }, o.id);
     check('ring turns red near the end', !!(await until(async () => (await s.page.getAttribute('#modalCard [data-cx]', 'data-lvl')) === 'low', 3000)));
     check('box switches to the call message', !!(await until(() => s.page.isVisible('#modalCard .cx-call'), 9000)));
     const txt = await s.page.textContent('#modalCard .cx-call');
     check('call message names the phone number with a tel link', /closed/.test(txt) && /9962419353/.test(txt) && (await s.page.locator('#modalCard .cx-call a[href="tel:9962419353"]').count()) === 1, txt.trim().slice(0, 80));
     check('cancel button is gone', (await s.page.locator('#modalCard [data-cancel]').count()) === 0);
     /* The server also refuses: put the order outside the window on the server clock. */
-    db.docs.get(`orders/${o.id}`).at = { __ts: Date.now() - 240000 };
+    db.docs.get(`orders/${o.id}`).at = { __ts: Date.now() - 360000 };
     const code = await s.page.evaluate(async (id) => { try { await window.LH.cancelOrder(window.__lh.orders.find((x) => x.id === id)); return 'ok'; } catch (e) { return e.code; } }, o.id);
     check('server refuses a late cancellation', code === 'permission-denied' && !db.docs.has(`status/${o.id}`), String(code));
     await closeModal(s);
@@ -1014,7 +1014,7 @@ async function until(fn, ms = 8000, step = 60) {
     check('the saved list is loaded again next time', !!(await until(async () => /ca@example\.com/.test(await ad.page.textContent('#rcptList')))));
     for (let i = 1; i <= 8; i++) { await add(`p${i}@example.com`); await until(async () => (await count()) === i + 1); }
     check('nine recipients saved', saved().split(',').length === 9 && (await count()) === 9);
-    await add('p9@example.com'); await until(() => saved().split(',').length === 10);
+    await add('p9@example.com'); await until(() => saved().split(',').length === 10); await until(async () => (await count()) === 10);
     await add('eleventh@example.com');
     check('an eleventh recipient is refused', /up to 10/.test(await msg()) && saved().split(',').length === 10);
     // the rules, called directly: a signed-in admin that is not the owner, and no sign-in at all, cannot read or write
