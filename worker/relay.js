@@ -17,6 +17,7 @@ const SMTP_HOST = 'smtp.gmail.com';
 const SMTP_PORT = 465; // implicit TLS
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 const MAX_PER_WINDOW = 120; // emails per 10 minutes, per Worker instance
+const MAX_PER_RECIPIENT = 8; // emails per 10 minutes to one address, so the relay cannot be used to mail-bomb someone
 const WINDOW_MS = 600000;
 
 const enc = new TextEncoder();
@@ -145,10 +146,15 @@ async function smtpSend({ open, user, pass, to, subject, text, html, name = SHOP
 
 /* ---------- Request handling ---------- */
 const recent = [];
-function allowSend(now = Date.now()) {
+const byRecipient = new Map();
+function allowSend(now = Date.now(), to = '') {
   while (recent.length && now - recent[0] > WINDOW_MS) recent.shift();
   if (recent.length >= MAX_PER_WINDOW) return false;
+  const times = (byRecipient.get(to) || []).filter((t) => now - t <= WINDOW_MS);
+  if (to && times.length >= MAX_PER_RECIPIENT) return false;
+  for (const [k, v] of byRecipient) if (!v.some((t) => now - t <= WINDOW_MS)) byRecipient.delete(k);
   recent.push(now);
+  if (to) { times.push(now); byRecipient.set(to, times); }
   return true;
 }
 
@@ -160,7 +166,7 @@ async function handleSend(body, env, open) {
   const html = typeof body.html === 'string' ? body.html : '';
   if (!EMAIL_RE.test(to) || to.length > 120) return [400, 'Invalid recipient'];
   if (!subject || subject.length > 200 || !text || text.length > 30000 || !html || html.length > 150000) return [400, 'Invalid message'];
-  if (!allowSend()) return [429, 'Too many emails, slow down'];
+  if (!allowSend(Date.now(), to)) return [429, 'Too many emails, slow down'];
   try {
     await smtpSend({ open, user: env.GMAIL_USER || SENDER, pass: String(env.GMAIL_APP_PASSWORD).replace(/\s+/g, ''), to, subject, text, html });
     return [204, null];
@@ -175,7 +181,9 @@ const worker = {
       'Access-Control-Allow-Origin': ORIGIN,
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      Vary: 'Origin'
+      Vary: 'Origin',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
     };
     const reply = (status, text) => new Response(text || null, { status, headers: cors });
     if (req.method === 'OPTIONS') return reply(204);

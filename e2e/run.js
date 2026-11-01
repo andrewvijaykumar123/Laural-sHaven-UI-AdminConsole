@@ -213,7 +213,7 @@ async function until(fn, ms = 8000, step = 60) {
     const tCard = await until(async () => (await card(A, o.id).count()) && Date.now() - o.t0);
     check('order reaches the admin board in about a second', !!tCard && tCard < 3000, `${tCard} ms`);
     const lat = await nextEmail(em, /We received your order/, o.t0);
-    check('"received" email within a few seconds', lat > 0 && lat < 4500, `${lat} ms`);
+    check('no email is sent when the order arrives', lat === -1);
     check('admin sanitised the customer name', (await A.page.evaluate(() => window.__xss)) === undefined && !/<img/i.test(await card(A, o.id).innerHTML()));
     let t = await act(A, o.id, 'accepted');
     const lc = await nextEmail(em, /confirmed/, t);
@@ -223,13 +223,11 @@ async function until(fn, ms = 8000, step = 60) {
     t = await act(A, o.id, 'cooking');
     check('customer sees cooking live', !!(await until(async () => (await shopStatus(s, o.id)) === 'cooking', 4000)));
     t = await act(A, o.id, 'ready');
-    const lr = await nextEmail(em, /is ready/, t);
-    check('"ready" email within a few seconds', lr > 0 && lr < 4500, `${lr} ms`);
     t = await act(A, o.id, 'completed');
     check('customer sees completed live', !!(await until(async () => (await shopStatus(s, o.id)) === 'completed', 4000)));
     await sleep(2500);
     const got = emailsTo(em);
-    check('no duplicate emails', new Set(got.map((e) => e.subject)).size === got.length, got.map((e) => e.subject.replace(/ - .*/, '')).join(' | '));
+    check('two emails for the whole order: confirmation, then invoice', got.length === 2 && /confirmed/.test(got[0].subject) && /complete/.test(got[1].subject) && got[1].html.includes('INVOICE'), got.map((e) => e.subject.replace(/ - .*/, '')).join(' | '));
     check('email body carries order id and total', got.every((e) => e.html.includes(o.id)) && got.some((e) => e.html.includes(fmt(items[0].price + items[1].price))));
     check('email body does not contain raw customer HTML', got.every((e) => !/<img src=x/i.test(e.html)));
     check('relay got a plain-text part too', got.every((e) => e.text && e.text.length > 20));
@@ -266,6 +264,95 @@ async function until(fn, ms = 8000, step = 60) {
     check('My orders shows the reason', /Item out of stock/.test(await s.page.textContent('#ordersBody')));
     await s.page.click('[data-again]');
     check('Order again refills the cart', !!(await until(async () => (await s.page.textContent('#cartCount')) === '1' && (await s.page.locator('#cartDrawer.open').count()) === 1, 3000)));
+  });
+
+  /* ---------------- Customer cancellation (3-minute window) ---------------- */
+  const cxText = (h) => h.page.evaluate(() => { const b = document.querySelector('#modalCard [data-cx] .cx-time'); return b ? b.textContent : null; });
+  await scenario('cancel: pending order inside the window', async () => {
+    const em = 'cx1@example.com';
+    const s = await newShop();
+    const o = await place(s, { items: [4], svc: 'dine', em });
+    await card(A, o.id).waitFor();
+    const t1 = await until(async () => (await cxText(s)) || null);
+    check('countdown box shows about 3:00', /^(3:00|2:5\d)$/.test(t1 || ''), t1);
+    await sleep(1600);
+    const t2 = await cxText(s);
+    check('countdown is ticking', !!t2 && t2 !== t1, `${t1} -> ${t2}`);
+    check('ring starts green', (await s.page.getAttribute('#modalCard [data-cx]', 'data-lvl')) === 'ok');
+    await s.page.click('#modalCard [data-cancel]');
+    check('confirm dialog is shown', !!(await until(() => s.page.isVisible('#cxConfirm'), 3000)));
+    await s.page.click('#cxConfirm [data-modal-close]');
+    check('keeping the order cancels nothing', (await shopStatus(s, o.id)) === 'pending' && !db.docs.has(`status/${o.id}`));
+    await s.page.click('#ordersBtn');
+    check('My orders shows the cancel box too', !!(await until(() => s.page.isVisible('#ordersBody [data-cx]'), 3000)));
+    await s.page.evaluate(() => document.querySelector('#ordersBody [data-cancel]').click());
+    await until(() => s.page.isVisible('#cxConfirm'), 3000);
+    await s.page.evaluate(() => document.querySelector('[data-cx-yes]').click());
+    check('cancelled screen is shown', !!(await until(() => s.page.isVisible('.cx-done'), 5000)));
+    const st = db.docs.get(`status/${o.id}`);
+    check('status is rejected with the customer reason', !!st && st.s === 'rejected' && st.r === 'Cancelled by customer', JSON.stringify(st));
+    check('storefront shows cancelled', (await shopStatus(s, o.id)) === 'rejected');
+    check('card leaves the admin board', !!(await until(async () => (await card(A, o.id).count()) === 0, 5000)));
+    check('admin is told about the cancellation', !!(await until(async () => new RegExp(`${o.id} was cancelled by the customer`).test(await A.page.textContent('#toasts')), 5000)));
+    await sleep(2500);
+    check('one cancellation email for a cancelled pending order', emailsTo(em).length === 1 && /cancelled/.test(emailsTo(em)[0].subject) && /Nothing will be prepared/.test(emailsTo(em)[0].text) && emailsTo(em)[0].html.includes(o.id), emailsTo(em).map((e) => e.subject).join(' | '));
+    await closeModal(s);
+    check('My orders says it was cancelled', /You cancelled this order/.test(await s.page.textContent('#ordersBody')) && /Cancelled/.test(await s.page.textContent('#ordersBody')));
+    check('no cancel box on a cancelled order', (await s.page.locator('#ordersBody .cx').count()) === 0);
+  });
+
+  await scenario('cancel: accepted order, confirmation then cancellation email', async () => {
+    const em = 'cx2@example.com';
+    const s = await newShop();
+    const o = await place(s, { items: [5], svc: 'take', em });
+    await act(A, o.id, 'accepted');
+    check('storefront sees accepted', !!(await until(async () => (await shopStatus(s, o.id)) === 'accepted', 4000)));
+    await sleep(600);
+    check('cancel is still offered once accepted', await s.page.isVisible('#modalCard [data-cancel]'));
+    await s.page.click('#modalCard [data-cancel]');
+    await s.page.click('[data-cx-yes]');
+    check('cancelled after acceptance', !!(await until(() => s.page.isVisible('.cx-done'), 5000)) && db.docs.get(`status/${o.id}`).s === 'rejected');
+    await sleep(2500);
+    const got = emailsTo(em);
+    check('two emails at most: confirmation, then cancellation, no apology', got.length === 2 && /confirmed/.test(got[0].subject) && /cancelled/.test(got[1].subject) && !got.some((e) => /could not be accepted/.test(e.subject)), got.map((e) => e.subject).join(' | '));
+  });
+
+  await scenario('cancel: window closes, then call the cafe', async () => {
+    const s = await newShop();
+    const o = await place(s, { items: [6], svc: 'dine', em: 'cx3@example.com' });
+    await card(A, o.id).waitFor();
+    await s.page.evaluate((id) => { window.__lh.orders.find((x) => x.id === id).ts -= 176000; }, o.id);
+    check('ring turns red near the end', !!(await until(async () => (await s.page.getAttribute('#modalCard [data-cx]', 'data-lvl')) === 'low', 3000)));
+    check('box switches to the call message', !!(await until(() => s.page.isVisible('#modalCard .cx-call'), 9000)));
+    const txt = await s.page.textContent('#modalCard .cx-call');
+    check('call message names the phone number with a tel link', /closed/.test(txt) && /9962419353/.test(txt) && (await s.page.locator('#modalCard .cx-call a[href="tel:9962419353"]').count()) === 1, txt.trim().slice(0, 80));
+    check('cancel button is gone', (await s.page.locator('#modalCard [data-cancel]').count()) === 0);
+    /* The server also refuses: put the order outside the window on the server clock. */
+    db.docs.get(`orders/${o.id}`).at = { __ts: Date.now() - 240000 };
+    const code = await s.page.evaluate(async (id) => { try { await window.LH.cancelOrder(window.__lh.orders.find((x) => x.id === id)); return 'ok'; } catch (e) { return e.code; } }, o.id);
+    check('server refuses a late cancellation', code === 'permission-denied' && !db.docs.has(`status/${o.id}`), String(code));
+    await closeModal(s);
+    await s.page.click('#ordersBtn');
+    check('My orders shows the call message', /call the cafe/i.test(await s.page.textContent('#ordersBody')));
+  });
+
+  await scenario('cancel: not once cooking, and not by someone else', async () => {
+    const s = await newShop();
+    const o = await place(s, { items: [7], svc: 'dine' });
+    await act(A, o.id, 'accepted');
+    await act(A, o.id, 'cooking');
+    check('storefront sees cooking', !!(await until(async () => (await shopStatus(s, o.id)) === 'cooking', 4000)));
+    check('box says the order is being prepared', !!(await until(async () => /already being prepared/.test(await s.page.textContent('#modalCard .cx-call')), 4000)));
+    const code = await s.page.evaluate(async (id) => { try { await window.LH.cancelOrder({ id, ts: Date.now() }); return 'ok'; } catch (e) { return e.code; } }, o.id);
+    check('server refuses once cooking', code === 'permission-denied' && db.docs.get(`status/${o.id}`).s === 'cooking', String(code));
+    const s2 = await newShop();
+    const o2 = await place(s2, { items: [8], svc: 'dine' });
+    const code2 = await s.page.evaluate(async (id) => { try { await window.LH.cancelOrder({ id, ts: Date.now() }); return 'ok'; } catch (e) { return e.code; } }, o2.id);
+    check("someone else's order cannot be cancelled", code2 === 'permission-denied' && !db.docs.has(`status/${o2.id}`), String(code2));
+    for (const h of [s, s2]) { await closeModal(h); }
+    await act(A, o.id, 'ready'); await act(A, o.id, 'completed');
+    await card(A, o2.id).waitFor();
+    await act(A, o2.id, 'accepted'); await act(A, o2.id, 'cooking'); await act(A, o2.id, 'ready'); await act(A, o2.id, 'completed');
   });
 
   /* ---------------- Delivery fees and location ---------------- */
@@ -316,8 +403,6 @@ async function until(fn, ms = 8000, step = 60) {
     const code = db.docs.get(`orders/${o.id}`).otp;
     check('delivery order carries a 4-digit code', /^[0-9]{4}$/.test(code), String(code));
     t = await act(A, o.id, 'out');
-    const lo = await nextEmail(em, /on the way/, t);
-    check('"on the way" email within a few seconds', lo > 0 && lo < 4500, `${lo} ms`);
     await A.page.click('#nav [data-tab="deliveries"]');
     await A.page.waitForSelector(`#dvList [data-dv="${o.id}"]`);
     check('Deliveries tab lists the order and map loads', await A.page.locator('#dvMap .leaflet-container, #dvMap.leaflet-container').count() > 0 || !!(await until(() => A.page.locator('#dvMap .leaflet-container, #dvMap.leaflet-container').count(), 6000)));
@@ -333,9 +418,8 @@ async function until(fn, ms = 8000, step = 60) {
     await A.page.waitForSelector('#otpIn');
     await A.page.fill('#otpIn', code);
     await A.page.click('#otpGo');
-    const ld = await nextEmail(em, /delivered/, t);
-    check('"delivered" email within a few seconds', ld > 0 && ld < 4500, `${ld} ms`);
     check('delivery closed by the code', (db.docs.get(`status/${o.id}`) || {}).how === 'otp');
+    check('delivery emailed only as confirmation then invoice', !!(await until(() => emailsTo(em).length === 2, 5000)) && /confirmed/.test(emailsTo(em)[0].subject) && /delivered/.test(emailsTo(em)[1].subject));
     check('track view reflects delivery', !!(await until(async () => /delivered/i.test(await s.page.textContent('#tvSub')), 5000)));
     await s.page.click('#tvClose');
   });
@@ -343,7 +427,6 @@ async function until(fn, ms = 8000, step = 60) {
   /* ---------------- Delivery code (OTP) and manual close ---------------- */
   const toOut = async (o) => { for (const to of ['accepted', 'cooking', 'ready', 'out']) await act(A, o.id, to); };
   const dStatus = (id) => db.docs.get(`status/${id}`) || {};
-  const invoiceIn = (m, ...parts) => !!m && parts.every((p) => m.html.includes(p));
   const otpMsg = async () => (await A.page.textContent('#otpMsg')).trim();
   const tryCode = async (code) => { await A.page.fill('#otpIn', code); await A.page.click('#otpGo'); };
 
@@ -355,8 +438,7 @@ async function until(fn, ms = 8000, step = 60) {
     check('code is 4 digits and stored on the order', /^[0-9]{4}$/.test(code), String(code));
     check('code is not on the public status doc', !JSON.stringify(dStatus(o.id)).includes('otp'));
     check('success screen shows the code', (await s.page.textContent('#modalCard .otp-box')).includes(code));
-    const m1 = await until(() => has(em, /received/), 8000);
-    check('"received" email contains the code', !!m1 && m1.text.includes(code) && m1.html.includes(code));
+    check('no email before the order is accepted', emailsTo(em).length === 0);
     await closeModal(s);
     await s.page.click('#ordersBtn');
     check('My orders shows the code', (await s.page.textContent('#ordersBody')).includes(code));
@@ -371,8 +453,7 @@ async function until(fn, ms = 8000, step = 60) {
     await act(A, o.id, 'cooking'); await act(A, o.id, 'ready');
     check('ready to completed is blocked for delivery', (await card(A, o.id).locator('[data-act="completed"]').count()) === 0);
     await act(A, o.id, 'out');
-    check('"on the way" email contains the code', !!(await until(() => { const e = has(em, /on the way/); return e && e.text.includes(code); }, 8000)));
-    check('out card offers code entry and manual close', (await card(A, o.id).locator('[data-act="completed"]').count()) === 1 && (await card(A, o.id).locator('[data-act="manual"]').count()) === 1);
+    check('out card offers code entry and manual close', !!(await until(async () => (await card(A, o.id).locator('[data-act="completed"]').count()) === 1 && (await card(A, o.id).locator('[data-act="manual"]').count()) === 1, 4000)));
     const wrong = code === '0000' ? '1111' : '0000';
     await act(A, o.id, 'completed');
     await A.page.waitForSelector('#otpIn');
@@ -391,9 +472,8 @@ async function until(fn, ms = 8000, step = 60) {
     await A.page.click('#manualYes');
     check('manual close completes the order', !!(await until(async () => (await shopStatus(s, o.id)) === 'completed', 5000)) && dStatus(o.id).how === 'manual');
     check('card shows closed manually', !!(await until(async () => /Closed manually/.test(await card(A, o.id).textContent()), 4000)));
-    check('delivered email sent', !!(await until(() => has(em, /delivered/), 8000)));
+    check('delivered email sent once and does not repeat the code', !!(await until(() => has(em, /delivered/), 8000)) && (await sleep(1500), emailsTo(em).length === 2) && !(has(em, /delivered/).text || '').includes(code));
     check('customer no longer sees the code', !(await s.page.evaluate(() => JSON.stringify(window.__lh.orders)).then((j) => j.includes(`"otp":"${code}"`))));
-    check('delivered email does not repeat the code', !(has(em, /delivered/).text || '').includes(code));
   });
 
   await scenario('delivery code: correct code closes the order', async () => {
@@ -412,7 +492,8 @@ async function until(fn, ms = 8000, step = 60) {
     check('card shows code verified', !!(await until(async () => /Code verified/.test(await card(A, o.id).textContent()), 4000)));
     check('delivered email arrives', (await nextEmail(em, /delivered/, t)) > 0);
     const dm = has(em, /delivered/);
-    check('delivered email carries a paid invoice with the address and delivery charge', invoiceIn(dm, 'INVOICE', 'PAID', 'Delivery charge', '12 Lake View Road', '9962419353'));
+    check('delivered email carries a paid invoice with the address and delivery charge', !!dm && ['INVOICE', 'PAID', 'Delivery charge', '12 Lake View Road', '9962419353'].every((p) => dm.html.includes(p)));
+    check('only the confirmation and the invoice were emailed', (await sleep(1500), emailsTo(em).length === 2));
     await s.page.click('#ordersBtn');
     check('code hidden after delivery', !(await s.page.locator('#ordersBody .otp-box').count()));
   });
@@ -464,10 +545,12 @@ async function until(fn, ms = 8000, step = 60) {
     await card(A, o.id).locator('[data-act="print"]').click();
     check('kitchen ticket still prints in ticket layout', (await A.page.evaluate(() => document.querySelector('#printArea').className)) === '');
     for (const to of ['accepted', 'cooking']) await act(A, o.id, to);
-    const t = await act(A, o.id, 'ready');
-    const mail = await until(() => world.emails.find((x) => x.to === em && x.t >= t && /ready/.test(x.subject)), 8000);
-    check('ready email carries the invoice, payment due at the counter', !!mail && invHas(mail.html, 'INVOICE', 'PAYMENT DUE', '9962419353', 'maps.app.goo.gl') && mail.text.includes(`Invoice no: ${o.id}`));
+    await act(A, o.id, 'ready');
+    check('no ready email: only the confirmation so far', (await sleep(2500), emailsTo(em).length === 1 && /confirmed/.test(emailsTo(em)[0].subject)));
+    const t = Date.now();
     await act(A, o.id, 'completed');
+    const mail = await until(() => world.emails.find((x) => x.to === em && x.t >= t && /complete/.test(x.subject)), 8000);
+    check('completion email carries the paid invoice', !!mail && invHas(mail.html, 'INVOICE', 'PAID', '9962419353', 'maps.app.goo.gl') && mail.text.includes(`Invoice no: ${o.id}`));
     await A.page.click('#nav [data-tab="history"]');
     await A.page.fill('#histSearch', o.id);
     await A.page.locator(`[data-inv="${o.id}"]`).click();
@@ -764,14 +847,14 @@ async function until(fn, ms = 8000, step = 60) {
     const o = await place(s, { items: [7], svc: 'take', em });
     await closeModal(s);
     await card(A2, o.id).waitFor();
-    await sleep(3500);
-    check('"received" email sent exactly once', emailsTo(em).filter((e) => /We received/.test(e.subject)).length === 1, String(emailsTo(em).length));
+    await sleep(1500);
+    check('no email before the order is accepted', emailsTo(em).length === 0);
     await act(A2, o.id, 'accepted');
     await sleep(3500);
-    check('"confirmed" email sent exactly once', emailsTo(em).filter((e) => /confirmed/.test(e.subject)).length === 1);
-    check('claim documents exist for both emails', db.docs.has(`mailq/${o.id}_p`) && db.docs.has(`mailq/${o.id}_c`));
+    check('"confirmed" email sent exactly once', emailsTo(em).filter((e) => /confirmed/.test(e.subject)).length === 1 && emailsTo(em).length === 1, String(emailsTo(em).length));
+    check('claim document exists for the email', db.docs.has(`mailq/${o.id}_c`));
     check('both consoles show the new status', !!(await until(async () => /Accepted|Cooking/.test(await A.page.locator(`.col[data-status="accepted"]`).textContent()) && (await A.page.locator(`.col[data-status="accepted"] .ocard[data-id="${o.id}"]`).count()) === 1, 4000)));
-    const writes = db.writes.filter((w) => w.path === `mailq/${o.id}_p`).length;
+    const writes = db.writes.filter((w) => w.path === `mailq/${o.id}_c`).length;
     check('claim was written once', writes === 1, String(writes));
     await A2.ctx.close();
     world.pages.splice(world.pages.indexOf(A2), 1);
@@ -905,6 +988,7 @@ async function until(fn, ms = 8000, step = 60) {
     const o = await place(s, { items: [0], svc: 'take', em });
     await closeModal(s);
     await card(a, o.id).waitFor();
+    await act(a, o.id, 'accepted');
     check('GitHub mailer is kicked as the fallback', !!(await until(() => world.dispatches.length > d0, 5000)));
     check('no email went out through the relay', emailsTo(em).length === 0);
     await a.page.click('#nav [data-tab="settings"]');
@@ -922,8 +1006,9 @@ async function until(fn, ms = 8000, step = 60) {
     const o = await place(s, { items: [0], svc: 'take', em });
     await closeModal(s);
     await card(a, o.id).waitFor();
+    await act(a, o.id, 'accepted');
     check('GitHub mailer is kicked when SMTP is not configured', !!(await until(() => world.dispatches.length > d0, 5000)));
-    check('failed claim is released for the fallback mailer', !!(await until(() => !db.docs.has(`mailq/${o.id}_p`), 4000)));
+    check('failed claim is released for the fallback mailer', !!(await until(() => !db.docs.has(`mailq/${o.id}_c`), 4000)));
     await a.page.click('#nav [data-tab="settings"]');
     check('settings show the fallback state', /not available/i.test(await a.page.textContent('#mailState')));
     world.relay.mode = 'ok';

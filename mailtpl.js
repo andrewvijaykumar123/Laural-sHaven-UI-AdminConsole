@@ -107,19 +107,6 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">
       ...lines, '', `Subtotal  ${LH.fmt(o.total - fee)}`, ...(del ? [`Delivery charge  ${o.fee ? LH.fmt(o.fee) : 'Free'}`] : []), `GST: ${TAX_NOTE}`, `TOTAL  ${LH.fmt(o.total)}`, rupeesInWords(o.total), ''].join('\n');
   }
 
-  /* Sent the moment the order reaches the kitchen. */
-  function receivedEmail(LH, o) {
-    const subject = `We received your order ${o.id} - ${SHOP}`;
-    const next = o.pay === 'upi' ? 'Please complete the UPI payment if you have not already; we confirm it before the order is served.' : 'We will confirm it in a moment.';
-    const html = shell(LH, 'Order received', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, thank you! We have received your order <b>${LH.esc(o.id)}</b>.</p>
-${itemsTable(LH, o)}${otpHtml(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, false))}<br>Placed ${LH.esc(placedAt(o))} IST</p>
-${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(next)} You can follow its progress on our website, on the device you ordered from.</p>`, `We received your order ${o.id}.`);
-    const text = `Hi ${o.n}, thank you! We have received your order ${o.id}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, false)}\n\n${next}\n\n${otpText(LH, o)}- ${SHOP}`;
-    return { subject, html, text };
-  }
-
   function confirmEmail(LH, o, ctx = {}) {
     const prep = Number(ctx.prep) > 0 ? ` It should be ready in about ${Number(ctx.prep)} minutes.` : '';
     const subject = `Order ${o.id} confirmed - ${SHOP}`;
@@ -127,26 +114,8 @@ ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${L
 ${itemsTable(LH, o)}${otpHtml(LH, o)}
 <p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(where(o))}<br>${LH.esc(payLine(o, ctx.paid))}<br>Placed ${LH.esc(placedAt(o))} IST</p>
 ${o.nt ? `<p style="margin:12px 0 0;font-size:13px;color:#4b5563">Your note: ${LH.esc(o.nt)}</p>` : ''}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${o.svc === 'deliver' ? 'We will email you when it is on the way. You can also follow the rider live on our website.' : 'We will email you again when it is ready.'}</p>`, `Order ${o.id} is confirmed.`);
-    const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\n${o.svc === 'deliver' ? 'We will email you when it is on the way.' : 'We will email you again when it is ready.'}\n\n${otpText(LH, o)}- ${SHOP}`;
-    return { subject, html, text };
-  }
-
-  function outEmail(LH, o) {
-    const subject = `Order ${o.id} is on the way - ${SHOP}`;
-    const html = shell(LH, 'Out for delivery', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is out for delivery to ${LH.esc(o.addr)}.</p>
-${itemsTable(LH, o)}${otpHtml(LH, o)}
-<p style="margin:16px 0 0;font-size:13px;color:#4b5563">${LH.esc(payLine(o, false))}. Open our website on the device you ordered from to follow the rider live on the map.</p>`, `Order ${o.id} is on the way.`);
-    const text = `Hi ${o.n}, your order ${o.id} is out for delivery to ${o.addr}.\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n${payLine(o, false)}\n\nOpen our website on the device you ordered from to follow the rider live.\n\n${otpText(LH, o)}- ${SHOP}`;
-    return { subject, html, text };
-  }
-
-  function readyEmail(LH, o, ctx = {}) {
-    const how = o.svc === 'take' ? 'Please collect it at the counter.' : `We will bring it to ${o.tbl ? `table ${o.tbl}` : 'your table'}.`;
-    const subject = `Order ${o.id} is ready - ${SHOP}`;
-    const html = shell(LH, 'Your order is ready', `<p style="margin:0 0 18px;font-size:16px">Hi ${LH.esc(o.n)}, your order <b>${LH.esc(o.id)}</b> is ready. ${LH.esc(how)} Your invoice is below.</p>
-${invoiceHtml(LH, o, { paid: !!ctx.paid })}`, `Order ${o.id} is ready. Invoice enclosed.`);
-    const text = `Hi ${o.n}, your order ${o.id} is ready. ${how}\n\n${invoiceText(LH, o, { paid: !!ctx.paid })}\nThank you for choosing ${SHOP}.`;
+<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Follow your order${o.svc === 'deliver' ? ' and the rider live' : ''} on our website, on the device you ordered from. We will email your invoice when it is complete.</p>`, `Order ${o.id} is confirmed.`);
+    const text = `Hi ${o.n}, your order ${o.id} is confirmed.${prep}\n\n${textItems(LH, o)}\nTotal ${LH.fmt(o.total)}\n\n${where(o)}\n${payLine(o, ctx.paid)}\n\nFollow your order on our website, on the device you ordered from. We will email your invoice when it is complete.\n\n${otpText(LH, o)}- ${SHOP}`;
     return { subject, html, text };
   }
 
@@ -168,25 +137,40 @@ ${invoiceHtml(LH, o, { paid: true })}`, `Order ${o.id} is ${del ? 'delivered' : 
     return { subject, html, text };
   }
 
-  /* Which emails are due for an order in status st = { s, r, v }, given the markers already stored in mail
-     (p received, c confirmed, o out, r ready/complete, x rejected; -1 = skipped). Returns [[key, message], ...] in sending order. */
+  function cancelEmail(LH, o) {
+    const refund = o.pay === 'upi' ? ` If you already paid by UPI, please call us on ${CAFE.phone} about your refund.` : '';
+    const subject = `Order ${o.id} cancelled - ${SHOP}`;
+    const html = shell(LH, 'Order cancelled', `<p style="margin:0 0 12px;font-size:16px">Hi ${LH.esc(o.n)}, as you asked, your order <b>${LH.esc(o.id)}</b> has been cancelled. Nothing will be prepared.${LH.esc(refund)}</p>
+${itemsTable(LH, o)}
+<p style="margin:16px 0 0;font-size:13px;color:#4b5563">Placed ${LH.esc(placedAt(o))} IST. You are always welcome to order again.</p>`, `Order ${o.id} is cancelled.`);
+    const text = `Hi ${o.n}, as you asked, your order ${o.id} has been cancelled. Nothing will be prepared.${refund}
+
+${textItems(LH, o)}
+Total ${LH.fmt(o.total)}
+
+You are always welcome to order again.
+- ${SHOP}`;
+    return { subject, html, text };
+  }
+
+  /* At most two emails per order: the confirmation (bill and delivery code) when it is accepted and the paid invoice when it is completed,
+     or one apology if it is rejected, or one cancellation notice if the customer cancelled it (after a confirmation that makes two).
+     Markers stored in mail: c confirmed, r invoice, x rejected or cancelled. Returns [[key, message], ...]. */
   function plan(LH, o, st, mail, ctx = {}) {
     const s = LH.STATUS[st.s] ? st.s : 'pending';
     const jobs = [];
     if (!o.em) return jobs;
     if (s === 'rejected') {
-      if (!mail.x) jobs.push(['x', rejectEmail(LH, o, st.r)]);
+      if (!mail.x) jobs.push(['x', st.r === LH.CANCEL.REASON ? cancelEmail(LH, o) : rejectEmail(LH, o, st.r)]);
       return jobs;
     }
-    if (!mail.p && s === 'pending') jobs.push(['p', receivedEmail(LH, o)]);
+    if (s === 'completed') {
+      if (!mail.r || mail.r === -1) jobs.push(['r', doneEmail(LH, o)]);
+      return jobs;
+    }
     if (!mail.c && s !== 'pending') jobs.push(['c', confirmEmail(LH, o, { prep: ctx.prep, paid: !!st.v })]);
-    const del = o.svc === 'deliver';
-    const needR = !mail.r || mail.r === -1;
-    if (del && !mail.o && s === 'out') jobs.push(['o', outEmail(LH, o)]);
-    if (needR && s === 'ready' && !del) jobs.push(['r', readyEmail(LH, o, { paid: !!st.v })]);
-    if (needR && s === 'completed') jobs.push(['r', doneEmail(LH, o)]);
     return jobs;
   }
 
-  return { SHOP, BRAND, CAFE, IST_MS, shell, itemsTable, invoiceHtml, invoiceText, rupeesInWords, receivedEmail, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, plan };
+  return { SHOP, BRAND, CAFE, IST_MS, shell, itemsTable, invoiceHtml, invoiceText, rupeesInWords, confirmEmail, doneEmail, rejectEmail, cancelEmail, plan };
 });

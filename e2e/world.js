@@ -71,6 +71,15 @@ class Db {
 
   eventsOn() { const c = this.docs.get('config/events'); return !!c && c.on === true; }
 
+  /* Mirrors cancelOk() and the status create/update rules: own order, 3 minutes (+5 s) after it was placed, still pending or accepted. */
+  validCancel(op, id, uid, d) {
+    const order = this.docs.get(`orders/${id}`);
+    if (!order || !uid || order.uid !== uid || !(Date.now() < this.val(order.at) + 185000)) return false;
+    if (Object.keys(d).some((k) => !['s', 'r', 'ts', 'u'].includes(k)) || !['s', 'r', 'ts', 'u'].every((k) => k in d)) return false;
+    if (d.s !== 'rejected' || d.r !== 'Cancelled by customer' || !Number.isInteger(d.ts) || !Number.isInteger(d.u)) return false;
+    return op === 'create' || ['pending', 'accepted'].includes((this.docs.get(`status/${id}`) || {}).s || 'pending');
+  }
+
   allowed(op, p, uid, data) {
     const [col, id] = p.split('/');
     if (this.noMailRules && (col === 'mail' || col === 'mailq')) return false; // simulates firestore.rules not yet republished
@@ -91,7 +100,7 @@ class Db {
       if (op === 'create') return signedIn && this.cfg().open !== false && /^LH-[A-Z0-9]{6,10}$/.test(id) && this.validOrder(data, id, uid);
       return admin;
     }
-    if (col === 'status') return op === 'get' ? signedIn : admin;
+    if (col === 'status') return op === 'get' ? signedIn : admin || ((op === 'create' || op === 'update') && this.validCancel(op, id, uid, data));
     if (col === 'config') return op === 'get' || op === 'list' ? true : admin;
     if (col === 'mail') return admin;
     if (col === 'mailq') return op === 'update' ? false : admin && (op !== 'create' || /^LH-[A-Z0-9]{6,10}_[pcorx]$/.test(id));

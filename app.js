@@ -66,21 +66,28 @@
 
   async function lock() {
     try { await LH.admin.signOut(); } catch (e) { /* ignore */ }
-    store.del('lastActive');
-    store.del('orders');
-    store.del('fbk');
-    store.del('evk');
-    store.del('evmeta');
+    ['lastActive', 'orders', 'fbk', 'evk', 'evmeta', 'meta', 'ghToken'].forEach((k) => store.del(k));
+    store.set('purgeIdb', 1);
     location.reload();
+  }
+  // Firestore's offline cache holds customer details; it is removed on the next load, before Firestore opens it.
+  async function purgeCache() {
+    if (!store.get('purgeIdb', 0)) return;
+    try {
+      const names = indexedDB.databases ? (await indexedDB.databases()).map((d) => d.name || '').filter((n) => n.startsWith('firestore/')) : [];
+      await Promise.all(names.map((n) => new Promise((done) => { const r = indexedDB.deleteDatabase(n); r.onsuccess = r.onerror = r.onblocked = () => done(); })));
+    } catch (e) { /* best effort */ }
+    store.del('purgeIdb');
   }
   $('#lockBtn').addEventListener('click', lock);
   $('#lockBtn2').addEventListener('click', lock);
 
   (async () => {
+    await purgeCache();
     try {
       const user = await LH.admin.current();
       if (user && idleLeft() > 0) { touch(true); start(); return; }
-      if (user) await LH.admin.signOut();
+      if (user) { await LH.admin.signOut(); store.set('purgeIdb', 1); }
     } catch (e) { /* not signed in */ }
     $('#lock').hidden = false;
     $('#email').focus();
@@ -107,6 +114,19 @@
   const evStatusOf = (id) => (evMeta[id] && evMeta[id].s) || 'pending';
   const saveOrders = () => store.set('orders', [...orders.values()].sort((a, b) => b.ts - a.ts).slice(0, 1500));
   const saveMeta = () => store.set('meta', meta);
+  // Saved status data is device storage, so keep only well-formed entries.
+  const savedMeta = (raw, states, events) => {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    Object.entries(raw).forEach(([id, m]) => {
+      if (!(events ? LH.validEventId(id) : LH.validId(id)) || !m || typeof m !== 'object' || Array.isArray(m)) return;
+      const c = { ...m };
+      if (c.s !== undefined && !(typeof c.s === 'string' && Object.hasOwn(states, c.s))) delete c.s;
+      if (events && c.mv !== undefined) { const mv = LH.validMove(c.mv); if (mv) c.mv = mv; else delete c.mv; }
+      out[id] = c;
+    });
+    return out;
+  };
   const statusOf = (id) => (meta[id] && meta[id].s) || 'pending';
   const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const money = (arr) => arr.reduce((s, o) => s + o.total, 0);
@@ -114,6 +134,7 @@
   function start() {
     if (started) return;
     started = true;
+    store.del('ghToken'); // the relay does the sending now; an old pasted token is no longer needed
     $('#lock').hidden = true;
     $('#app').hidden = false;
     ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach((ev) => window.addEventListener(ev, () => touch(), { passive: true, capture: true }));
@@ -123,12 +144,12 @@
 
     clearTs = Number(store.get('clearTs', 0)) || 0;
     wipeTs = Number(store.get('wipeTs', 0)) || 0;
-    meta = store.get('meta', {});
+    meta = savedMeta(store.get('meta', {}), STATUS, false);
     store.get('orders', []).forEach((o) => { const v = LH.validateOrder(o); if (v && v.ts > clearTs) orders.set(v.id, v); });
     draft = readDraft();
     store.get('fbk', []).forEach((x) => { const f = LH.validateFeedback(x); if (f && f.ts > wipeTs) feedback.set(f.id, f); });
     store.get('evk', []).forEach((x) => { const v = LH.validateEvent(x); if (v && v.ts > wipeTs) evk.set(v.id, v); });
-    evMeta = store.get('evmeta', {});
+    evMeta = savedMeta(store.get('evmeta', {}), LH.EVENT_STATUS, true);
 
     buildMenuAdmin();
     wireUI();
@@ -165,10 +186,16 @@
   LH.on('status', ({ id, s, r, ts, how }) => {
     const m = meta[id] || (meta[id] = {});
     if (ts < (m.sts || 0)) return;
+    const wasLive = m.s !== 'rejected';
     m.s = s; m.r = r; m.sts = ts;
     if (how) m.how = how; else delete m.how;
     if (s !== 'out') delete m.loc;
     saveMeta(); pruneRide(); scheduleRender();
+    if (wasLive && s === 'rejected' && r === LH.CANCEL.REASON && Date.now() - ts < 5 * 60 * 1000) {
+      fresh.delete(id);
+      chime();
+      toast(`Order ${id} was cancelled by the customer`, 'bad');
+    }
     if (Date.now() - ts < MAIL_FRESH_MS) mailOrder(id);
   });
   LH.on('loc', ({ id, lat, lng, acc, lts }) => {
@@ -880,7 +907,7 @@
     valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q; }));
     $('#topItems').innerHTML = rank(Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8), (v) => `${v}×`);
     $('#catSplit').innerHTML = rank(Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8), fmt);
-    const mix = {}; all.forEach((o) => { const l = LH.statusLabel(o, statusOf(o.id)); mix[l] = (mix[l] || 0) + 1; });
+    const mix = {}; all.forEach((o) => { const l = LH.statusLabel(o, statusOf(o.id), (meta[o.id] || {}).r); mix[l] = (mix[l] || 0) + 1; });
     $('#statusMix').innerHTML = rank(Object.entries(mix).sort((a, b) => b[1] - a[1]), (v) => v);
     const sv = { 'Dine-in': 0, Takeaway: 0, Delivery: 0, 'UPI': 0, 'Cash / counter': 0 };
     all.forEach((o) => { sv[o.svc === 'take' ? 'Takeaway' : o.svc === 'deliver' ? 'Delivery' : 'Dine-in']++; sv[o.pay === 'upi' ? 'UPI' : 'Cash / counter']++; });
@@ -901,7 +928,7 @@
         <td>${esc(o.n)}<br><span class="muted">${esc(o.p)}${o.em ? ` · ${esc(o.em)}` : ''}</span>${o.svc === 'deliver' ? `<br><span class="muted">🛵 ${esc(o.addr)}</span>` : ''}</td>
         <td>${o.it.map(([id, n]) => `${n}× ${esc(ITEMS.get(id).name)}`).join(', ')}${o.nt ? `<br><span class="muted">📝 ${esc(o.nt)}</span>` : ''}</td>
         <td><b>${fmt(o.total)}</b>${o.svc === 'deliver' ? `<br><span class="muted">incl. ${o.fee ? fmt(o.fee) : 'free'} delivery · ${LH.fromShopKm(o.lat, o.lng).toFixed(1)} km</span>` : ''}</td><td>${o.pay === 'upi' ? (m.v ? 'UPI · verified' : 'UPI · pending') : o.svc === 'deliver' ? 'Cash on delivery' : 'Counter'}</td>
-        <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s))}</span>${closedChip(o, s)}${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
+        <td><span class="badge" style="background:${STATUS[s].color}">${esc(LH.statusLabel(o, s, m.r))}</span>${closedChip(o, s)}${m.r ? `<br><span class="muted">${esc(m.r)}</span>` : ''}</td></tr>`;
     }).join('') : '<tr><td colspan="7" class="muted" style="padding:30px;text-align:center">No orders found.</td></tr>';
   }
 

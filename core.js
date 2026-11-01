@@ -162,7 +162,11 @@
     const del = !!(o && o.svc === 'deliver');
     return (NEXT[s] || []).filter((x) => (x === 'out' ? del : !(del && s === 'ready' && x === 'completed')));
   };
-  const statusLabel = (o, s) => (o && o.svc === 'deliver' && s === 'completed' ? 'Delivered' : (STATUS[s] || STATUS.pending).label);
+  const statusLabel = (o, s, r) => (s === 'rejected' && r === CANCEL.REASON ? 'Cancelled' : o && o.svc === 'deliver' && s === 'completed' ? 'Delivered' : (STATUS[s] || STATUS.pending).label);
+
+  /* A customer may cancel their own order for 3 minutes after placing it, until the kitchen starts cooking. firestore.rules enforces the same window (plus 5 s of slack). */
+  const CANCEL = { MS: 180000, REASON: 'Cancelled by customer', FROM: ['pending', 'accepted'] };
+  const cancelLeft = (o) => Math.max(0, CANCEL.MS - (Date.now() - (Number(o && o.ts) || 0)));
 
   /* ---------- Delivery area: straight-line distance from the cafe ---------- */
   const SHOP = { lat: 12.847503004009383, lng: 80.19645821775838 };
@@ -211,7 +215,7 @@
   const cleanIcon = (v) => clean(v, 8).replace(/[&"'`=]/g, '');
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const randomString = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => ALPHABET[x % ALPHABET.length]).join('');
-  const newOrderId = () => `LH-${randomString(6)}`;
+  const newOrderId = () => `LH-${randomString(10)}`;
   const validId = (id) => typeof id === 'string' && /^LH-[A-Z0-9]{6,10}$/.test(id);
   // Delivery code: 4 digits the customer hands to the delivery partner, who types it into the admin console to close the order.
   const validOtp = (s) => typeof s === 'string' && /^\d{4}$/.test(s);
@@ -317,7 +321,7 @@
     completed: { label: 'Completed', short: 'Done', color: '#3b82f6' }
   };
   const EVENT_NEXT = { pending: ['confirmed', 'declined'], confirmed: ['completed', 'cancelled'], declined: [], cancelled: [], completed: [] };
-  const newEventId = () => `EV-${randomString(6)}`;
+  const newEventId = () => `EV-${randomString(10)}`;
   const validEventId = (id) => typeof id === 'string' && /^EV-[A-Z0-9]{6,10}$/.test(id);
   const pad2 = (n) => String(n).padStart(2, '0');
   const dateKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -445,6 +449,18 @@
     return order;
   }
 
+  // Writes the cancelled status for the caller's own order. Unlike other writes this waits for the server, so a refusal (window closed) is reported.
+  async function cancelOrder(o) {
+    if (!o || !validId(o.id)) throw new Error('Invalid order');
+    await ensureUser();
+    const FB = window.LH_FB;
+    const ts = now();
+    const sent = FB.setDoc(FB.doc(firebase().db, 'status', o.id), { s: 'rejected', r: CANCEL.REASON, ts, u: ts }, { merge: true });
+    sent.catch(() => {});
+    await Promise.race([sent, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Timed out'), { code: 'deadline-exceeded' })), 8000))]);
+    return ts;
+  }
+
   const fromFeedbackDoc = (d) => validateFeedback({
     id: d.id, ts: d.at && d.at.toMillis ? d.at.toMillis() : now(), n: d.n, svc: d.svc, sr: d.sr, c: d.c,
     ir: (Array.isArray(d.ir) ? d.ir : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
@@ -519,7 +535,7 @@
     const { db } = firebase();
     const ts = now();
     if (f.k === 'st') {
-      if (!validId(f.id) || !STATUS[f.s]) throw new Error('Invalid status');
+      if (!validId(f.id) || !Object.hasOwn(STATUS, f.s)) throw new Error('Invalid status');
       // A finished order stops exposing the rider's position.
       const wipe = f.s === 'completed' || f.s === 'rejected' ? { lat: null, lng: null, acc: null, lts: null } : {};
       const how = f.s === 'completed' && (f.how === 'otp' || f.how === 'manual') ? { how: f.how } : {};
@@ -561,7 +577,7 @@
       return snap.docs.map((d) => d.data().k);
     }
     if (f.k === 'evst') {
-      if (!validEventId(f.id) || !EVENT_STATUS[f.s]) throw new Error('Invalid event status');
+      if (!validEventId(f.id) || !Object.hasOwn(EVENT_STATUS, f.s)) throw new Error('Invalid event status');
       const mv = f.mv ? validMove(f.mv) : null;
       if (f.mv && !mv) throw new Error('Invalid new time');
       return write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...(mv ? { mv } : {}) }, { merge: true }));
@@ -706,12 +722,12 @@
   }
 
   function emitEvStatus(id, d) {
-    if (typeof d.s === 'string' && EVENT_STATUS[d.s]) emit('evstatus', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0, mv: validMove(d.mv) });
+    if (typeof d.s === 'string' && Object.hasOwn(EVENT_STATUS, d.s)) emit('evstatus', { id, s: d.s, r: clean(d.r, 80), ts: Number(d.ts) || 0, mv: validMove(d.mv) });
   }
 
   const lastStatus = new Map();
   function emitStatus(id, d) {
-    if (typeof d.s === 'string' && STATUS[d.s]) {
+    if (typeof d.s === 'string' && Object.hasOwn(STATUS, d.s)) {
       finalStatus.set(id, d.s === 'completed' || d.s === 'rejected');
       // Rider location updates rewrite the same document; only announce real status changes.
       const key = `${d.s}|${Number(d.ts) || 0}|${d.r || ''}`;
@@ -857,16 +873,19 @@
 
   function init(app) {
     prefix = `lh.${app}.`;
-    cfg = { ...cfg, ...store.get('cfg', {}) };
-    const mc = store.get('menu', null);
+    // Saved copies are re-validated and cannot carry a timestamp from the future, which would freeze the live settings.
+    const saved = (k) => { const v = store.get(k, null); return v && typeof v === 'object' && !Array.isArray(v) ? { ...v, ts: Math.min(Number(v.ts) || 0, Date.now() + 864e5) } : null; };
+    const sc = saved('cfg');
+    if (sc) applyCfgDoc(sc);
+    const mc = saved('menu');
     if (mc && typeof mc === 'object') applyMenu(mc);
-    const ec = store.get('evcfg', null);
-    if (ec && typeof ec === 'object') applyEvDoc(ec);
+    const ec = saved('evcfg');
+    if (ec) applyEvDoc(ec);
     window.addEventListener('online', flush);
   }
 
   window.LH = {
-    UPI, MENU, ITEMS, HIDDEN, STATUS, NEXT, nextFor, statusLabel, priceAt, unit, applyMenu, getMenuDoc: () => menuDoc, validMove, moveEvent,
+    UPI, MENU, ITEMS, HIDDEN, STATUS, NEXT, nextFor, statusLabel, CANCEL, cancelLeft, cancelOrder, priceAt, unit, applyMenu, getMenuDoc: () => menuDoc, validMove, moveEvent,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder, validateFeedback,
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,

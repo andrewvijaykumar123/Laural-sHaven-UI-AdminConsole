@@ -67,23 +67,20 @@ const send = async (m) => { outbox.push(m); };
   LH.applyMenu(null);
   assert.strictEqual(LH.HIDDEN.length, 0);
 
-  // pending: received; accepted: confirm; ready: ready; repeat: nothing
+  // pending: nothing; accepted: confirmation; cooking/ready: nothing; completed: invoice
   const orders = [{ id: 'LH-AAAAAA', data: doc('LH-AAAAAA'), ts: T0 - 600000 }];
   const statuses = {}; const mails = {};
   const run = () => lib.sweep({ store: fake(orders, statuses, mails), send, LH, now: T0, log: () => {} });
-  await run(); assert.strictEqual(outbox.length, 1, 'pending sends the received email'); assert.match(outbox[0].subject, /received/);
-  await run(); assert.strictEqual(outbox.length, 1, 'received is sent once');
+  await run(); assert.strictEqual(outbox.length, 0, 'pending sends no email');
   statuses['LH-AAAAAA'] = { s: 'accepted' };
-  await run(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /confirmed/);
-  assert.ok(!outbox[1].html.includes('<b>Anita') && !outbox[1].html.includes('Anita <b>'), 'markup in names is neutralised');
-  await run(); assert.strictEqual(outbox.length, 2, 'no duplicate confirmation');
-  statuses['LH-AAAAAA'] = { s: 'cooking' };
-  await run(); assert.strictEqual(outbox.length, 2);
-  statuses['LH-AAAAAA'] = { s: 'ready' };
-  await run(); assert.strictEqual(outbox.length, 3); assert.match(outbox[2].subject, /ready/);
+  await run(); assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /confirmed/);
+  assert.ok(!outbox[0].html.includes('<b>Anita') && !outbox[0].html.includes('Anita <b>'), 'markup in names is neutralised');
+  await run(); assert.strictEqual(outbox.length, 1, 'no duplicate confirmation');
+  for (const s of ['cooking', 'ready']) { statuses['LH-AAAAAA'] = { s }; await run(); }
+  assert.strictEqual(outbox.length, 1, 'nothing between confirmation and completion');
   statuses['LH-AAAAAA'] = { s: 'completed' };
-  await run(); assert.strictEqual(outbox.length, 3, 'three emails per dine-in order at most');
-
+  await run(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /complete/);
+  await run(); assert.strictEqual(outbox.length, 2, 'two emails per order at most');
   // an email another device is already sending (claimed) is left alone
   outbox.length = 0;
   const claimedStore = { ...fake([{ id: 'LH-GGGGGG', data: doc('LH-GGGGGG'), ts: T0 }], { 'LH-GGGGGG': { s: 'accepted' } }, {}), claimed: async () => true };
@@ -92,33 +89,33 @@ const send = async (m) => { outbox.push(m); };
 
   // the shared planner (also used by the admin console) never repeats an email
   const po = lib.toOrder(LH, 'LH-HHHHHH', doc('LH-HHHHHH'), T0);
-  assert.deepStrictEqual(lib.plan(LH, po, { s: 'pending' }, {}).map((j) => j[0]), ['p']);
-  assert.deepStrictEqual(lib.plan(LH, po, { s: 'pending' }, { p: 1 }).map((j) => j[0]), []);
-  assert.deepStrictEqual(lib.plan(LH, po, { s: 'accepted' }, { p: 1 }).map((j) => j[0]), ['c']);
-  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, { p: 1, c: 1 }).map((j) => j[0]), ['r']);
-  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: 'x' }, { p: 1 }).map((j) => j[0]), ['x']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'pending' }, {}).map((j) => j[0]), []);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'accepted' }, {}).map((j) => j[0]), ['c']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'out' }, { c: 1 }).map((j) => j[0]), []);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, {}).map((j) => j[0]), ['r']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, { c: 1 }).map((j) => j[0]), ['r']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, { c: 1, r: 1 }).map((j) => j[0]), []);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'completed' }, { c: 1, r: -1 }).map((j) => j[0]), ['r'], 'an earlier skip marker is retried');
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: 'x' }, {}).map((j) => j[0]), ['x']);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: 'x' }, { c: 1, x: 1 }).map((j) => j[0]), []);
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: LH.CANCEL.REASON }, {}).map((j) => j[0]), ['x'], 'a customer cancellation is acknowledged once');
+  assert.deepStrictEqual(lib.plan(LH, po, { s: 'rejected', r: LH.CANCEL.REASON }, { x: 1 }).map((j) => j[0]), [], 'and never repeated');
+  const cj = lib.plan(LH, po, { s: 'rejected', r: LH.CANCEL.REASON }, {})[0][1];
+  assert.ok(/cancelled/.test(cj.subject) && !/could not be accepted/.test(cj.subject) && /Nothing will be prepared/.test(cj.text) && cj.html.includes(po.id), 'cancellation email wording');
+  assert.strictEqual(LH.statusLabel(po, 'rejected', LH.CANCEL.REASON), 'Cancelled');
+  assert.strictEqual(LH.statusLabel(po, 'rejected', 'Item out of stock'), 'Rejected');
+  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 1000 }) > 170000 && LH.cancelLeft({ ts: Date.now() - 1000 }) <= 179000, true);
+  assert.strictEqual(LH.cancelLeft({ ts: Date.now() - 181000 }), 0);
   assert.deepStrictEqual(lib.plan(LH, { ...po, em: '' }, { s: 'accepted' }, {}), []);
-  outbox.length = 0;
-  // jumped straight to ready: both emails, in order
-  outbox.length = 0;
-  const o2 = [{ id: 'LH-BBBBBB', data: doc('LH-BBBBBB'), ts: T0 }];
-  await lib.sweep({ store: fake(o2, { 'LH-BBBBBB': { s: 'ready' } }, {}), send, LH, now: T0, log: () => {} });
-  assert.deepStrictEqual(outbox.map((m) => /ready/.test(m.subject)), [false, true]);
 
-  // completed without ever being seen as ready: confirmation plus a completion email, once
+  // jumped straight to completed: just the invoice, once
   outbox.length = 0;
   const m3 = {};
   const s3 = fake([{ id: 'LH-CCCCCC', data: doc('LH-CCCCCC'), ts: T0 }], { 'LH-CCCCCC': { s: 'completed' } }, m3);
   await lib.sweep({ store: s3, send, LH, now: T0, log: () => {} });
-  assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /complete/); assert.ok(m3['LH-CCCCCC'].r > 0);
+  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /complete/); assert.ok(m3['LH-CCCCCC'].r > 0);
   await lib.sweep({ store: s3, send, LH, now: T0, log: () => {} });
-  assert.strictEqual(outbox.length, 2, 'no repeat');
-
-  // earlier skip marker (r = -1) on a completed order is retried once
-  outbox.length = 0;
-  const m3b = { 'LH-EEEEEE': { c: T0, r: -1 } };
-  await lib.sweep({ store: fake([{ id: 'LH-EEEEEE', data: doc('LH-EEEEEE'), ts: T0 }], { 'LH-EEEEEE': { s: 'completed' } }, m3b), send, LH, now: T0, log: () => {} });
-  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /complete/);
+  assert.strictEqual(outbox.length, 1, 'no repeat');
 
   // rejected: one apology, reason included, no confirmation
   outbox.length = 0;
@@ -155,7 +152,7 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(stats.hours[9], 1); assert.strictEqual(stats.hours[13], 1);
   assert.strictEqual(outbox[0].to, 'owner@example.com'); assert.ok(outbox[0].attachments[0].content.includes('LH-R00001'));
 
-  // delivery: confirm -> on the way -> delivered (no "ready" email), address carried through, bad ones rejected
+  // delivery: confirmation, then the invoice on delivery (ready and out add nothing), address carried through
   const dd = (id, extra = {}) => doc(id, { svc: 'deliver', tbl: '', pay: 'counter', addr: '12 Test Street, Kelambakkam', lat: 12.8475, lng: 80.1964, ...extra });
   outbox.length = 0;
   const dOrders = [{ id: 'LH-DELIV1', data: dd('LH-DELIV1'), ts: T0 }];
@@ -165,11 +162,10 @@ const send = async (m) => { outbox.push(m); };
   dSt['LH-DELIV1'] = { s: 'ready' };
   await dRun(); assert.strictEqual(outbox.length, 1, 'no ready email for delivery');
   dSt['LH-DELIV1'] = { s: 'out' };
-  await dRun(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /on the way/);
-  await dRun(); assert.strictEqual(outbox.length, 2, 'on the way sent once');
+  await dRun(); assert.strictEqual(outbox.length, 1, 'no on-the-way email');
   dSt['LH-DELIV1'] = { s: 'completed' };
-  await dRun(); assert.strictEqual(outbox.length, 3); assert.match(outbox[2].subject, /delivered/);
-  await dRun(); assert.strictEqual(outbox.length, 3, 'delivered sent once');
+  await dRun(); assert.strictEqual(outbox.length, 2); assert.match(outbox[1].subject, /delivered/);
+  await dRun(); assert.strictEqual(outbox.length, 2, 'delivered sent once');
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV2', dd('LH-DELIV2', { lat: 13.5, lng: 80.2 }), T0), null, 'out of range rejected');
   // fee: free to 5 km, Rs 15/km to 10 km, Rs 20/km beyond; nothing past 15 km
   assert.deepStrictEqual([0, 4.9, 5, 6, 7.5, 10, 12, 15].map(LH.deliveryFee), [0, 0, 0, 15, 38, 75, 115, 175]);
@@ -199,7 +195,7 @@ const send = async (m) => { outbox.push(m); };
   assert.match(dm.html, /Home delivery/); assert.match(dm.text, /Home delivery 2 orders/);
   assert.match(lib.reportEmail(LH, day, [], null).html, /No home deliveries/);
 
-  // delivery code: generated as 4 digits, kept only on delivery orders, shown in the received, confirmed and on-the-way emails, never after delivery
+  // delivery code: generated as 4 digits, kept only on delivery orders, shown in the confirmation email
   for (let i = 0; i < 200; i++) assert.match(LH.newOtp(), /^\d{4}$/);
   assert.ok(LH.validOtp('0042') && !LH.validOtp('42') && !LH.validOtp('12345') && !LH.validOtp('12a4') && !LH.validOtp(1234) && !LH.validOtp(undefined));
   const withCode = lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1', { otp: '4827' }), T0);
@@ -207,17 +203,17 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1', { otp: '48x7' }), T0).otp, undefined, 'malformed code is dropped');
   assert.strictEqual(lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1'), T0).otp, undefined, 'older orders have no code');
   assert.strictEqual(lib.toOrder(LH, 'LH-TAKE01', doc('LH-TAKE01', { otp: '4827' }), T0).otp, undefined, 'non-delivery orders never carry a code');
-  for (const [name, fn] of [['received', lib.receivedEmail], ['confirmed', lib.confirmEmail], ['on the way', lib.outEmail]]) {
-    const m = fn(LH, withCode, {});
-    assert.ok(m.html.includes('4827') && m.text.includes('Your delivery code: 4827'), `${name} email shows the code`);
+  {
+    const m = lib.confirmEmail(LH, withCode, {});
+    assert.ok(m.html.includes('4827') && m.text.includes('Your delivery code: 4827'), 'confirmation email shows the code');
   }
-  for (const [name, fn] of [['ready', lib.readyEmail], ['delivered', lib.doneEmail]]) assert.ok(!fn(LH, withCode, {}).html.includes('4827') && !fn(LH, withCode, {}).text.includes('4827'), `${name} email does not repeat the code`);
+  assert.ok(!lib.doneEmail(LH, withCode).html.includes('4827') && !lib.doneEmail(LH, withCode).text.includes('4827'), 'invoice email does not repeat the code');
   assert.ok(!lib.confirmEmail(LH, lib.toOrder(LH, 'LH-DELIV1', dd('LH-DELIV1'), T0), {}).html.includes('delivery code'), 'no code block without a code');
   assert.ok(!lib.confirmEmail(LH, lib.toOrder(LH, 'LH-TAKE01', doc('LH-TAKE01'), T0), {}).html.includes('delivery code'), 'no code block for takeaway');
   // the scheduled mailer includes the code too
   outbox.length = 0;
-  await lib.sweep({ store: fake([{ id: 'LH-DELIV1', data: dd('LH-DELIV1', { otp: '4827' }), ts: T0 }], { 'LH-DELIV1': { s: 'pending' } }, {}), send, LH, now: T0, log: () => {} });
-  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /received/); assert.ok(outbox[0].text.includes('4827'), 'fallback mailer sends the code with the first email');
+  await lib.sweep({ store: fake([{ id: 'LH-DELIV1', data: dd('LH-DELIV1', { otp: '4827' }), ts: T0 }], { 'LH-DELIV1': { s: 'accepted' } }, {}), send, LH, now: T0, log: () => {} });
+  assert.strictEqual(outbox.length, 1); assert.match(outbox[0].subject, /confirmed/); assert.ok(outbox[0].text.includes('4827'), 'fallback mailer sends the code');
   // the daily report CSV never contains the code
   const csvMail = lib.reportEmail(LH, day, [{ o: withCode, s: 'completed', v: false, r: '' }], null);
   assert.ok(!csvMail.attachments[0].content.includes('4827') && !csvMail.html.includes('4827'), 'report has no code');
@@ -264,7 +260,6 @@ const send = async (m) => { outbox.push(m); };
   const o = lib.toOrder(LH, 'LH-AAAAAA', doc('LH-AAAAAA'), T0);
   fs.writeFileSync(path.join(dir, 'invoice.html'), tpl.shell(LH, 'Invoice', tpl.invoiceHtml(LH, dinv, { paid: true })));
   fs.writeFileSync(path.join(dir, 'confirm.html'), lib.confirmEmail(LH, o, { prep: 12 }).html);
-  fs.writeFileSync(path.join(dir, 'ready.html'), lib.readyEmail(LH, o).html);
   fs.writeFileSync(path.join(dir, 'report.html'), outbox[0].html);
   console.log('all tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -104,6 +104,14 @@ function fakeServer(script) {
   assert.strictEqual(srv.log.cmds[1], `AUTH PLAIN ${Buffer.from('\0andrewvijaykumar123@gmail.com\0xyz').toString('base64')}`, 'spaces in the app password are removed');
   srv.server.close();
 
+  // one address cannot be mailed more than a handful of times per window
+  srv = await fakeServer({});
+  const codes = [];
+  for (let i = 0; i < 10; i++) codes.push((await handleSend({ to: 'victim@example.com', subject: 's', text: 't', html: 'h' }, env, opener(srv.port)))[0]);
+  assert.strictEqual(codes.filter((c) => c === 204).length, 8);
+  assert.strictEqual(codes[9], 429);
+  srv.server.close();
+
   // HTTP layer: no token, preflight
   const res = await worker.fetch(new Request('https://relay.test/send', { method: 'POST', body: '{}' }), env);
   assert.strictEqual(res.status, 401);

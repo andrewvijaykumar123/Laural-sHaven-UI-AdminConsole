@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('vm');
 
 const tpl = require('../mailtpl.js');
-const { IST_MS, SHOP, BRAND, shell, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, receivedEmail } = tpl;
+const { IST_MS, SHOP, BRAND, shell, confirmEmail, doneEmail, rejectEmail } = tpl;
 const MAX_FAILS = 3;
 const WINDOW_MS = 48 * 3600000;
 
@@ -181,4 +181,4 @@ async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   return msg.stats;
 }
 
-module.exports = { loadCore, toOrder, plan: tpl.plan, receivedEmail, confirmEmail, outEmail, readyEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
+module.exports = { loadCore, toOrder, plan: tpl.plan, confirmEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
