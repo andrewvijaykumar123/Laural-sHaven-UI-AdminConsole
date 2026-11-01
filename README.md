@@ -54,6 +54,16 @@ One-time setup:
 2. In Cloudflare, redeploy the Worker with the contents of worker/relay.js and add the secret GMAIL_APP_PASSWORD (a Gmail app password for the sender account). The existing GH_TOKEN secret stays for the fallback.
 3. Keep the admin console open on at least one device while the cafe takes orders; emails are sent from there.
 
+## Daily sales report recipients (owner only)
+
+The nightly report always goes to the owner (andrewvijaykumar123@gmail.com) with the full order list as a CSV. Only the owner can add other recipients: Settings, Email notifications, "Daily report recipients (owner only)", then enter the owner password. Up to 10 addresses. Extra recipients get a separate sales summary: no CSV, and no customer names, phone numbers or addresses.
+
+How it is enforced:
+
+- The list lives in `reportcfg/recipients`. The rules allow reading and writing it only for the owner's own password sign-in (`isOwner()`); a signed-in admin that is not the owner, or the public, is refused. The console signs in as the owner only for these calls and never changes who is signed in.
+- The rules only bound the shape and size of the list, so the mailer checks every address again (format, length, duplicates, maximum 10, never the owner) before sending, and one failing address never stops the others or the owner copy.
+
+One-time setup: republish `firestore.rules` (adds `isOwner()` and the `reportcfg` collection). Until then the manager shows "Could not load/save".
 ## Tests
 
 `powershell

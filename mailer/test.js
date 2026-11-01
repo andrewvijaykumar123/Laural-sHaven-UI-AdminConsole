@@ -151,6 +151,32 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(stats.upiUnverified.length, 1); assert.strictEqual(stats.open.length, 1);
   assert.strictEqual(stats.hours[9], 1); assert.strictEqual(stats.hours[13], 1);
   assert.strictEqual(outbox[0].to, 'owner@example.com'); assert.ok(outbox[0].attachments[0].content.includes('LH-R00001'));
+  assert.strictEqual(outbox.length, 1, 'no extra recipients: only the owner is emailed');
+
+  // extra report recipients (added by the owner only): validated again here, sales summary without customer details
+  assert.deepStrictEqual(lib.cleanRecipients(['A@B.co', 'a@b.co', ' c@d.org ', 'owner@example.com', 'nope', 42, null, 'x@y', 'e'.repeat(90) + '@z.com', '<s>@x.com'], 'OWNER@example.com'), ['a@b.co', 'c@d.org']);
+  assert.strictEqual(lib.cleanRecipients(Array.from({ length: 30 }, (_, i) => `p${i}@x.com`), 'o@x.com').length, 10, 'capped at 10');
+  assert.deepStrictEqual(lib.cleanRecipients('a@b.co', 'o@x.com'), [], 'not a list');
+  outbox.length = 0;
+  const withRecipients = { ...fake(rep, st), recipients: async () => ['Partner@Example.com', 'owner@example.com', 'bad', 'partner@example.com', 'ca@example.com'] };
+  await lib.dailyReport({ store: withRecipients, send, LH, to: 'owner@example.com', day, log: () => {} });
+  assert.deepStrictEqual(outbox.map((m) => m.to), ['owner@example.com', 'partner@example.com', 'ca@example.com'], 'owner first, then each valid recipient once');
+  assert.ok(outbox[0].attachments.length === 1 && outbox[0].html.includes('9000000002'), 'the owner copy has the full CSV and customer details');
+  outbox.slice(1).forEach((m) => {
+    assert.strictEqual(m.attachments.length, 0, 'no CSV for extra recipients');
+    assert.ok(!/9000000002|9876543210|Anita/.test(m.html + m.text), 'no customer names or phone numbers for extra recipients');
+    assert.ok(m.html.includes('LH-R00004') && /sales summary/i.test(m.html) && m.subject === outbox[0].subject, 'still a full sales summary');
+  });
+  assert.ok(!outbox.slice(1).some((m) => m.bcc || m.cc), 'recipients never see each other');
+  outbox.length = 0;
+  const flaky = async (m) => { if (m.to === 'partner@example.com') throw Object.assign(new Error('x'), { code: 'EENVELOPE' }); outbox.push(m); };
+  await lib.dailyReport({ store: withRecipients, send: flaky, LH, to: 'owner@example.com', day, log: () => {} });
+  assert.deepStrictEqual(outbox.map((m) => m.to), ['owner@example.com', 'ca@example.com'], 'one failing recipient does not block the others');
+  outbox.length = 0;
+  await lib.dailyReport({ store: { ...fake(rep, st), recipients: async () => { throw new Error('firestore down'); } }, send, LH, to: 'owner@example.com', day, log: () => {} });
+  assert.deepStrictEqual(outbox.map((m) => m.to), ['owner@example.com'], 'an unreadable list never blocks the owner report');
+  const ownerFail = async () => { throw Object.assign(new Error('x'), { code: 'EAUTH' }); };
+  await assert.rejects(() => lib.dailyReport({ store: withRecipients, send: ownerFail, LH, to: 'owner@example.com', day, log: () => {} }), 'the owner send failing still fails the run');
 
   // delivery: confirmation, then the invoice on delivery (ready and out add nothing), address carried through
   const dd = (id, extra = {}) => doc(id, { svc: 'deliver', tbl: '', pay: 'counter', addr: '12 Test Street, Kelambakkam', lat: 12.8475, lng: 80.1964, ...extra });

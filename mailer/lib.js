@@ -129,7 +129,7 @@ function reportCsv(LH, rows) {
   return [head, ...body].map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
 
-function reportEmail(LH, day, rows, prev) {
+function reportEmail(LH, day, rows, prev, { summary = false } = {}) {
   const r = buildReport(LH, rows);
   const f = LH.fmt; const e = LH.esc;
   const card = (label, value, sub) => `<td style="padding:10px;background:#faf7f2;border-radius:10px;text-align:center"><div style="font-size:11px;color:#6b7280;text-transform:uppercase">${e(label)}</div><div style="font-size:20px;font-weight:700">${e(value)}</div><div style="font-size:11px;color:#6b7280">${e(sub)}</div></td>`;
@@ -142,7 +142,7 @@ function reportEmail(LH, day, rows, prev) {
 
   const inner = `<table role="presentation" width="100%" cellpadding="6" cellspacing="6"><tr>${card('Sales', f(r.sales), `${r.validCount} orders${delta}`)}${card('Avg ticket', f(r.avg), 'per order')}</tr><tr>${card('Completed', r.completed, `of ${r.placed} placed`)}${card('Rejected', r.rejected, 'not served')}</tr></table>
 ${h('Payments')}${table([['UPI verified', `${r.upiPaidN} orders`, f(r.upiPaid)], ['UPI not yet verified', `${r.upiUnverified.length} orders`, f(r.upiUnverified.reduce((t, x) => t + x.o.total, 0))], ['Pay at counter', `${r.counterN} orders`, f(r.counterAmt)]], ['l', 'r', 'r'])}
-${r.upiUnverified.length ? `${h('UPI payments to verify')}${table(r.upiUnverified.map((x) => [x.o.id, x.o.n, x.o.p, f(x.o.total)]), ['l', 'l', 'l', 'r'])}` : ''}
+${r.upiUnverified.length ? `${h('UPI payments to verify')}${table(r.upiUnverified.map((x) => (summary ? [x.o.id, f(x.o.total)] : [x.o.id, x.o.n, x.o.p, f(x.o.total)])), summary ? ['l', 'r'] : ['l', 'l', 'l', 'r'])}` : ''}
 ${h('Service')}${table([['Dine-in', `${r.dine} orders`], ['Takeaway', `${r.take} orders`], ['Delivery', `${r.deliver} orders`]], ['l', 'r'])}
 ${h('Home delivery')}${r.del.placed ? table([['Orders', `${r.del.n} orders`, f(r.del.sales)], ['Food sales', '', f(r.del.food)], ['Delivery fees', '', f(r.del.fees)], ['Average ticket', '', f(r.del.avg)], ['Average distance', '', `${r.del.avgKm.toFixed(1)} km`], [`Free zone, up to ${LH.FREE_KM} km`, `${r.del.bands.free.n} orders`, f(r.del.bands.free.sales)], [`${LH.FREE_KM} to ${LH.MID_KM} km`, `${r.del.bands.mid.n} orders`, f(r.del.bands.mid.fees)], [`${LH.MID_KM} to ${LH.DELIVERY_KM} km`, `${r.del.bands.far.n} orders`, f(r.del.bands.far.fees)], ['Delivered', `${r.del.completed} of ${r.del.n}`, ''], ['UPI / cash on delivery', `${r.del.upi} / ${r.del.cod}`, ''], ['Rejected', `${r.del.rejected}`, '']], ['l', 'r', 'r']) + `<p style="margin:6px 0 0;font-size:11px;color:#6b7280">Fee rows show delivery fees collected; the free zone row shows order value.</p>` : '<p style="margin:0;font-size:13px;color:#6b7280">No home deliveries</p>'}
 ${h('Top sellers')}${table(r.top.map(([n, q, v]) => [n, `${q}x`, f(v)]), ['l', 'r', 'r'])}
@@ -150,12 +150,27 @@ ${h('Revenue by category')}${table(r.cats.map(([n, v]) => [n, f(v)]), ['l', 'r']
 ${h('Orders by hour (IST)')}${hourRows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${hourRows}</table>${r.peak >= 0 ? `<p style="margin:6px 0 0;font-size:12px;color:#6b7280">Busiest hour: ${pad(r.peak)}:00</p>` : ''}` : '<p style="margin:0;font-size:13px;color:#6b7280">No orders</p>'}
 ${h('Customers')}<p style="margin:0;font-size:13px">${r.customers} customers, ${r.repeat} ordered more than once today.</p>
 ${r.reasons.length ? `${h('Rejections')}${table(r.reasons.map(([k, n]) => [k, n]), ['l', 'r'])}` : ''}
-${r.open.length ? `${h('Not finished at close')}${table(r.open.map((x) => [x.o.id, x.o.n, x.s, f(x.o.total)]), ['l', 'l', 'l', 'r'])}` : ''}
-<p style="margin:20px 0 0;font-size:12px;color:#6b7280">The full list of orders is attached as a CSV file.</p>`;
+${r.open.length ? `${h('Not finished at close')}${table(r.open.map((x) => (summary ? [x.o.id, x.s, f(x.o.total)] : [x.o.id, x.o.n, x.s, f(x.o.total)])), summary ? ['l', 'l', 'r'] : ['l', 'l', 'l', 'r'])}` : ''}
+<p style="margin:20px 0 0;font-size:12px;color:#6b7280">${summary ? 'This is a sales summary. Customer details are not included.' : 'The full list of orders is attached as a CSV file.'}</p>`;
 
   const subject = `Daily report ${day} - ${f(r.sales)} from ${r.validCount} orders`;
-  const text = `${SHOP} daily report, ${prettyDay(day)}\nSales ${f(r.sales)} from ${r.validCount} orders${delta}\nAverage ticket ${f(r.avg)}\nCompleted ${r.completed} of ${r.placed}, rejected ${r.rejected}\nUPI verified ${f(r.upiPaid)}, UPI to verify ${r.upiUnverified.length}, counter ${f(r.counterAmt)}\nHome delivery ${r.del.n} orders, ${f(r.del.sales)} (fees ${f(r.del.fees)})\nTop: ${r.top.slice(0, 3).map(([n, q]) => `${n} x${q}`).join(', ') || 'none'}\nFull list attached.`;
-  return { subject, html: shell(LH, `Daily report - ${prettyDay(day)}`, inner), text, attachments: [{ filename: `lauralshaven-${day}.csv`, content: `\ufeff${reportCsv(LH, rows)}`, contentType: 'text/csv; charset=utf-8' }], stats: r };
+  const text = `${SHOP} daily report, ${prettyDay(day)}\nSales ${f(r.sales)} from ${r.validCount} orders${delta}\nAverage ticket ${f(r.avg)}\nCompleted ${r.completed} of ${r.placed}, rejected ${r.rejected}\nUPI verified ${f(r.upiPaid)}, UPI to verify ${r.upiUnverified.length}, counter ${f(r.counterAmt)}\nHome delivery ${r.del.n} orders, ${f(r.del.sales)} (fees ${f(r.del.fees)})\nTop: ${r.top.slice(0, 3).map(([n, q]) => `${n} x${q}`).join(', ') || 'none'}\n${summary ? 'Sales summary only.' : 'Full list attached.'}`;
+  return { subject, html: shell(LH, `Daily report - ${prettyDay(day)}`, inner), text, attachments: summary ? [] : [{ filename: `lauralshaven-${day}.csv`, content: `\ufeff${reportCsv(LH, rows)}`, contentType: 'text/csv; charset=utf-8' }], stats: r };
+}
+
+const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+const MAX_RECIPIENTS = 10;
+/* The recipient list is data written by the owner; it is re-checked here so a bad entry can never reach the mail transport. */
+function cleanRecipients(list, owner) {
+  const seen = new Set([String(owner || '').toLowerCase()]);
+  const out = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
+    if (e.length > 80 || !EMAIL_RE.test(e) || seen.has(e)) continue;
+    seen.add(e); out.push(e);
+    if (out.length >= MAX_RECIPIENTS) break;
+  }
+  return out;
 }
 
 async function dailyReport({ store, send, LH, to, day, log = console.log }) {
@@ -178,7 +193,17 @@ async function dailyReport({ store, send, LH, to, day, log = console.log }) {
   const msg = reportEmail(LH, day, rows, prev);
   await send({ to, ...msg });
   log(`report sent for ${day}: ${rows.length} orders`);
+  let extra = [];
+  try { extra = cleanRecipients(store.recipients ? await store.recipients() : [], to); } catch (e) { log('::warning title=report::could not read the recipient list'); }
+  if (extra.length) {
+    const lite = reportEmail(LH, day, rows, prev, { summary: true });
+    let ok = 0;
+    for (const addr of extra) {
+      try { await send({ to: addr, ...lite }); ok++; } catch (e) { log(`::warning title=report::could not send to a recipient: ${e && (e.code || e.responseCode) || 'error'}`); }
+    }
+    log(`summary sent to ${ok} of ${extra.length} extra recipients`);
+  }
   return msg.stats;
 }
 
-module.exports = { loadCore, toOrder, plan: tpl.plan, confirmEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, istDate, SHOP };
+module.exports = { loadCore, toOrder, plan: tpl.plan, confirmEmail, doneEmail, rejectEmail, sweep, targetDay, dayBounds, buildReport, reportEmail, dailyReport, cleanRecipients, istDate, SHOP };

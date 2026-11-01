@@ -14,6 +14,13 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // The super admin: the owner's own password sign-in. Used only for who may receive the daily report (reportcfg below).
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'password'
+        && request.auth.token.get('email', '').lower() == 'andrewvijaykumar123@gmail.com';
+    }
+
     function storeOpen() {
       let path = /databases/$(database)/documents/config/store;
       return !exists(path) || get(path).data.get('open', true) == true;
@@ -169,6 +176,18 @@ service cloud.firestore {
       allow read, delete: if isAdmin();
       allow create: if isAdmin() && id.matches('LH-[A-Z0-9]{6,10}_[pcorx]');
       allow update: if false;
+    }
+
+    // Who receives the nightly sales report. Private to the owner (never public like config/*); the mailer reads it with the service account.
+    // The mailer re-checks every address, so the rules only bound the shape and size.
+    match /reportcfg/{doc} {
+      allow read: if isOwner();
+      allow create, update: if isOwner() && doc == 'recipients'
+        && request.resource.data.keys().hasOnly(['to', 'ts', 'by'])
+        && request.resource.data.keys().hasAll(['to', 'ts'])
+        && request.resource.data.to is list && request.resource.data.to.size() <= 10
+        && request.resource.data.ts is int;
+      allow delete: if isOwner();
     }
 
     // Open/closed, sold-out items, prep time and banner.

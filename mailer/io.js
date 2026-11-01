@@ -26,7 +26,8 @@ function connect() {
     status: async (id) => { const s = await db.doc(`status/${id}`).get(); return s.exists ? s.data() : null; },
     mail: async (id) => { const s = await db.doc(`mail/${id}`).get(); return s.exists ? s.data() : null; },
     claimed: async (id, key, now) => { const s = await db.doc(`mailq/${id}_${key}`).get(); const at = s.exists && s.data().at; return !!(at && at.toMillis && now - at.toMillis() < 180000); },
-    setMail: (id, patch) => db.doc(`mail/${id}`).set(patch, { merge: true })
+    setMail: (id, patch) => db.doc(`mail/${id}`).set(patch, { merge: true }),
+    recipients: async () => { const s = await db.doc('reportcfg/recipients').get(); return s.exists && Array.isArray(s.data().to) ? s.data().to : []; }
   };
 }
 

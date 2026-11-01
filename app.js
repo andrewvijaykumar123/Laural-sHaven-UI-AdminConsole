@@ -1366,25 +1366,25 @@
     $('#mailNow').addEventListener('click', (e) => runNow(e.currentTarget, 'mailer.yml', null, 'Email service started'));
     $('#reportNow').addEventListener('click', (e) => runNow(e.currentTarget, 'daily-report.yml', null, 'Report on its way'));
     renderMail();
-    // Checks the owner's password without touching the current sign-in.
-    const verifyOwner = async (password) => {
+    // Checks the owner's password without touching the current sign-in; the token is only used for the owner-only REST calls below.
+    const ownerSignIn = async (password) => {
       try {
         const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(window.LH_FIREBASE.apiKey)}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: OWNER_EMAIL, password, returnSecureToken: false })
+          body: JSON.stringify({ email: OWNER_EMAIL, password, returnSecureToken: true })
         });
-        if (r.ok) return 'ok';
+        if (r.ok) return { res: 'ok', tok: String((await r.json().catch(() => ({}))).idToken || '') };
         const m = String(((await r.json().catch(() => ({}))).error || {}).message || '');
-        return /TOO_MANY_ATTEMPTS/.test(m) ? 'busy' : r.status === 400 ? 'wrong' : 'error';
-      } catch (err) { return 'error'; }
+        return { res: /TOO_MANY_ATTEMPTS/.test(m) ? 'busy' : r.status === 400 ? 'wrong' : 'error' };
+      } catch (err) { return { res: 'error' }; }
     };
-    const askOwner = (title, text, label, run) => {
+    const askOwner = (title, text, label, run, cls = 'danger') => {
       openModal(`<h3>${esc(title)}</h3><p class="muted" style="margin-bottom:12px">${esc(text)}</p>
         <form id="clearForm" autocomplete="off" novalidate>
           <label class="muted" for="ownerPw" style="display:block;margin-bottom:6px">Owner approval: enter the password of ${esc(OWNER_EMAIL)}</label>
           <input id="ownerPw" class="pw-in" type="password" autocomplete="off" placeholder="Owner password">
           <p class="otp-msg" id="clearMsg" role="alert"></p>
-          <button class="btn danger" id="confirmClear" type="submit" style="width:100%;margin-bottom:8px">${esc(label)}</button>
+          <button class="btn ${cls}" id="confirmClear" type="submit" style="width:100%;margin-bottom:8px">${esc(label)}</button>
         </form>
         <button class="btn ghost" data-modal-close style="width:100%">Cancel</button>`);
       const pw = $('#ownerPw'), msg = $('#clearMsg'), go = $('#confirmClear');
@@ -1395,7 +1395,7 @@
         e.preventDefault();
         if (!pw.value) { msg.textContent = 'Enter the owner password.'; pw.focus(); return; }
         go.disabled = true;
-        const res = await verifyOwner(pw.value);
+        const { res, tok } = await ownerSignIn(pw.value);
         if (res !== 'ok') {
           go.disabled = false; pw.value = '';
           msg.textContent = res === 'wrong' ? 'That is not the owner password.' : res === 'busy' ? 'Too many attempts. Try again later.' : 'Could not check the password. Check your connection.';
@@ -1403,9 +1403,69 @@
           return;
         }
         closeModal();
-        await run();
+        await run(tok);
       });
     };
+
+    /* ---------- Daily report recipients: owner only. The reportcfg rules accept writes only from the owner's own sign-in, so the owner token is used directly over REST. ---------- */
+    const RCPT_MAX = 10;
+    const RCPT_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+    const rcptUrl = () => `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(window.LH_FIREBASE.projectId)}/databases/(default)/documents/reportcfg/recipients`;
+    const rcptLoad = async (tok) => {
+      const r = await fetch(rcptUrl(), { headers: { Authorization: `Bearer ${tok}` } });
+      if (r.status === 404) return [];
+      if (!r.ok) throw new Error(`load ${r.status}`);
+      const f = ((await r.json()).fields || {}).to;
+      return ((f && f.arrayValue && f.arrayValue.values) || []).map((v) => String(v.stringValue || '')).filter((s) => RCPT_RE.test(s)).slice(0, RCPT_MAX);
+    };
+    const rcptSave = async (tok, list) => {
+      const r = await fetch(rcptUrl(), {
+        method: 'PATCH', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { to: { arrayValue: list.length ? { values: list.map((s) => ({ stringValue: s })) } : {} }, ts: { integerValue: String(Date.now()) }, by: { stringValue: OWNER_EMAIL } } })
+      });
+      if (!r.ok) throw new Error(`save ${r.status}`);
+    };
+    function openRecipients(tok) {
+      let list = []; let loaded = false;
+      const commit = async (next, okMsg) => {
+        try { await rcptSave(tok, next); list = next; draw(); toast(okMsg, 'ok'); }
+        catch (err) { draw('Could not save. Only the owner account can change this list, and the updated Firestore rules must be published.'); }
+      };
+      function draw(msg = '') {
+        openModal(`<h3>Daily report recipients</h3>
+          <p class="muted" style="margin-bottom:12px">${esc(OWNER_EMAIL)} always gets the nightly report with the full order list. People added here get the sales summary only (no customer names, phone numbers or addresses). Only the owner can change this list.</p>
+          <ul class="rcpt-list" id="rcptList">${loaded ? (list.length ? list.map((e, i) => `<li><span>${esc(e)}</span><button type="button" class="btn ghost sm" data-rcpt-del="${i}" aria-label="Remove ${esc(e)}">Remove</button></li>`).join('') : '<li class="muted">No extra recipients yet.</li>') : '<li class="muted">Loading...</li>'}</ul>
+          <form id="rcptForm" autocomplete="off" novalidate class="rcpt-add">
+            <input id="rcptIn" class="pw-in" type="email" inputmode="email" maxlength="80" placeholder="name@example.com" aria-label="Email address to add"${loaded ? '' : ' disabled'}>
+            <button class="btn primary" type="submit"${loaded ? '' : ' disabled'}>Add</button>
+          </form>
+          <p class="otp-msg" id="rcptMsg" role="alert">${esc(msg)}</p>
+          <button class="btn ghost" data-modal-close style="width:100%">Done</button>`);
+        const inp = $('#rcptIn'); if (inp && loaded) inp.focus();
+        $('#rcptForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const v = inp.value.trim().toLowerCase();
+          if (!RCPT_RE.test(v) || v.length > 80) { $('#rcptMsg').textContent = 'Enter a valid email address.'; return; }
+          if (v === OWNER_EMAIL || list.includes(v)) { $('#rcptMsg').textContent = v === OWNER_EMAIL ? 'The owner already gets the report.' : 'That address is already on the list.'; return; }
+          if (list.length >= RCPT_MAX) { $('#rcptMsg').textContent = `You can add up to ${RCPT_MAX} recipients.`; return; }
+          await commit([...list, v], `${v} added.`);
+        });
+        $('#rcptList').addEventListener('click', async (e) => {
+          const b = e.target.closest('[data-rcpt-del]'); if (!b) return;
+          const gone = list[Number(b.dataset.rcptDel)];
+          await commit(list.filter((x) => x !== gone), `${gone} removed.`);
+        });
+      }
+      draw();
+      rcptLoad(tok).then((l) => { list = l; loaded = true; draw(); }).catch(() => { loaded = true; draw('Could not load the list. Publish the updated Firestore rules first.'); });
+    }
+    $('#rcptBtn').addEventListener('click', () => askOwner(
+      'Manage report recipients',
+      'Only the owner decides who receives the daily sales report. Enter the owner password to continue.',
+      'Continue',
+      (tok) => openRecipients(tok),
+      'primary'
+    ));
     $('#clearBoard').addEventListener('click', () => askOwner(
       'Clear the board?',
       'All current orders are removed from every admin device. The nightly email report only covers orders still on the board, so clear it after 23:59. Customers keep their own order history.',

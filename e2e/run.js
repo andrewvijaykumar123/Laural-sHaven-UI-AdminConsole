@@ -238,7 +238,8 @@ async function until(fn, ms = 8000, step = 60) {
     const s = await newShop();
     const o = await place(s, { items: [2], svc: 'take', pay: 'upi', name: "=SUM(1+1) O'Neil", em: 'upi@example.com' });
     placed.upi = o.id;
-    check('UPI QR is shown', await s.page.isVisible('#qrImg') && !!(await until(() => s.page.evaluate(() => { const i = document.querySelector('#qrImg'); return i && i.complete && i.naturalWidth === 1039 && /payment-upi\.jpeg$/.test(i.src); }))));
+    check('payment screen shows the cafe phone number and a copy button', (await s.page.textContent('#upiPhone')).replace(/\D/g, '') === '9962419353' && await s.page.isVisible('#copyUpi'));
+    check('no QR image or upi: link is offered', (await s.page.locator('#qrImg, a[href^="upi:"], a[href^="intent:"]').count()) === 0);
     await card(A, o.id).waitFor();
     check('admin sees UPI unverified', /UPI unverified/.test(await card(A, o.id).textContent()));
     await card(A, o.id).locator('[data-act="pay"]').click();
@@ -975,6 +976,57 @@ async function until(fn, ms = 8000, step = 60) {
     check('new orders still work after the wipe', !!(await until(() => db.docs.get(`orders/${o2.id}`))) && !!(await until(() => card(ad, o2.id).count(), 5000)));
     await ad.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(ad), 1);
     for (const h of [s, s2]) { await h.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(h), 1); }
+  });
+
+  /* ---------------- Daily report recipients (owner only) ---------------- */
+  await scenario('report recipients: only the owner can manage who gets the daily report', async () => {
+    const ad = await newAdmin();
+    const REC = 'reportcfg/recipients';
+    await ad.page.click('#nav [data-tab="settings"]');
+    const msg = async () => (await ad.page.textContent('#rcptMsg')).trim();
+    const add = async (v) => { await ad.page.fill('#rcptIn', v); await ad.page.click('#rcptForm button[type="submit"]'); };
+    const count = () => ad.page.locator('#rcptList [data-rcpt-del]').count();
+    const saved = () => ((db.docs.get(REC) || {}).to || []).join(',');
+    const calls0 = world.restCalls.length;
+    await ad.page.click('#rcptBtn');
+    check('managing recipients asks for the owner password', await ad.page.isVisible('#ownerPw'));
+    await ad.page.fill('#ownerPw', 'wrong-password');
+    await ad.page.click('#confirmClear');
+    await ad.page.waitForSelector('#clearMsg:not(:empty)');
+    check('wrong owner password is refused', /not the owner/.test(await ad.page.textContent('#clearMsg')));
+    check('nothing is read or written without the owner', world.restCalls.length === calls0 && !db.docs.has(REC));
+    await ad.page.fill('#ownerPw', world.OWNER_PASSWORD);
+    await ad.page.click('#confirmClear');
+    check('owner sees the recipient form', !!(await until(async () => (await ad.page.locator('#rcptIn').count()) === 1 && !(await ad.page.locator('#rcptIn').isDisabled()), 6000)));
+    check('list starts empty', (await count()) === 0 && /No extra recipients/.test(await ad.page.textContent('#rcptList')));
+    await add('nope'); check('invalid address refused', /valid email/.test(await msg()) && saved() === '');
+    await add('AndrewVijayKumar123@Gmail.com'); check('owner address is not added', /already gets/.test(await msg()) && saved() === '');
+    await add('Partner@Example.com');
+    check('valid address is saved lowercased by the owner', !!(await until(() => saved() === 'partner@example.com')) && db.docs.get(REC).by === 'andrewvijaykumar123@gmail.com' && Number.isInteger(db.docs.get(REC).ts));
+    check('list shows the new recipient', !!(await until(async () => (await count()) === 1)));
+    await add('partner@example.com'); check('duplicate refused', /already on the list/.test(await msg()) && saved() === 'partner@example.com');
+    await add('ca@example.com');
+    check('second recipient saved', !!(await until(() => saved() === 'partner@example.com,ca@example.com')));
+    await ad.page.click('[data-rcpt-del="0"]');
+    check('recipient can be removed', !!(await until(() => saved() === 'ca@example.com')) && !!(await until(async () => (await count()) === 1)));
+    await ad.page.click('#modalCard [data-modal-close]');
+    await ad.page.click('#rcptBtn'); await ad.page.fill('#ownerPw', world.OWNER_PASSWORD); await ad.page.click('#confirmClear');
+    check('the saved list is loaded again next time', !!(await until(async () => /ca@example\.com/.test(await ad.page.textContent('#rcptList')))));
+    for (let i = 1; i <= 8; i++) { await add(`p${i}@example.com`); await until(async () => (await count()) === i + 1); }
+    check('nine recipients saved', saved().split(',').length === 9 && (await count()) === 9);
+    await add('p9@example.com'); await until(() => saved().split(',').length === 10);
+    await add('eleventh@example.com');
+    check('an eleventh recipient is refused', /up to 10/.test(await msg()) && saved().split(',').length === 10);
+    // the rules, called directly: a signed-in admin that is not the owner, and no sign-in at all, cannot read or write
+    const rest = (auth, method, body) => ad.page.evaluate(async ([u, a, m, b]) => (await fetch(u, { method: m, headers: { ...(a ? { Authorization: a } : {}), 'Content-Type': 'application/json' }, body: b })).status, ['https://firestore.googleapis.com/v1/projects/p/databases/(default)/documents/reportcfg/recipients', auth, method, body]);
+    const evil = JSON.stringify({ fields: { to: { arrayValue: { values: [{ stringValue: 'evil@example.com' }] } }, ts: { integerValue: '1' }, by: { stringValue: 'x' } } });
+    const before = saved();
+    check('a regular admin cannot write the list', (await rest(`Bearer fake-token-${world.ADMIN_UID}`, 'PATCH', evil)) === 403 && saved() === before);
+    check('a regular admin cannot read the list', (await rest(`Bearer fake-token-${world.ADMIN_UID}`, 'GET')) === 403);
+    check('no sign-in cannot write the list', (await rest('', 'PATCH', evil)) === 403 && saved() === before);
+    check('nobody but the owner passes the rules', !db.allowed('create', REC, world.ADMIN_UID, { to: [], ts: 1 }) && !db.allowed('get', REC, null, {}) && db.allowed('update', REC, 'owner', { to: ['a@b.co'], ts: 1, by: 'x' }) && !db.allowed('update', REC, 'owner', { to: new Array(11).fill('a@b.co'), ts: 1 }) && !db.allowed('update', REC, 'owner', { to: [], ts: 1, extra: 1 }));
+    check('the list is never exposed through the public config document', !JSON.stringify([...db.docs.entries()].filter(([k]) => k.startsWith('config/'))).includes('@example.com'));
+    await ad.ctx.close().catch(() => {}); world.pages.splice(world.pages.indexOf(ad), 1);
   });
 
   /* ---------------- Email fallbacks ---------------- */

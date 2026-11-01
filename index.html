@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261101b">
+  <link rel="stylesheet" href="styles.css?v=20261102a">
 </head>
 <body>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -159,7 +159,8 @@
             <div id="mailState" class="muted" style="margin-top:8px"></div>
             <input class="tok" id="ghToken" type="password" autocomplete="off" placeholder="GitHub token (optional, makes emails instant)">
             <div class="stack"><button class="btn ghost sm" id="ghSave">Save token</button><button class="btn ghost sm" id="ghClear">Remove token</button>
-            <button class="btn ghost sm" id="mailNow">Send pending emails now</button><button class="btn ghost sm" id="reportNow">Email today's report now</button></div></div>
+            <button class="btn ghost sm" id="mailNow">Send pending emails now</button><button class="btn ghost sm" id="reportNow">Email today's report now</button></div>
+            <div class="stack" style="margin-top:10px"><button class="btn ghost sm" id="rcptBtn">Daily report recipients (owner only)</button></div></div>
           <div class="panel"><h3>Data</h3><p class="muted">Orders sync live through Firebase and are also cached on this device.</p>
             <div class="stack"><button class="btn ghost sm" id="exportCsv2">⬇ Export orders (CSV)</button>
             <button class="btn danger sm" id="clearBoard">Clear board for everyone</button>
@@ -179,7 +180,7 @@
   <script src="core.js?v=20261101p"></script>
   <script src="map.js?v=20261101b"></script>
   <script src="mailtpl.js?v=20261101b"></script>
-  <script src="app.js?v=20261101b"></script>
+  <script src="app.js?v=20261102a"></script>
   <script src="pwa.js"></script>
 </body>
 </html>

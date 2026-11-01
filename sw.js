@@ -42,7 +42,8 @@ function withTimeout(p, ms) {
 async function networkFirst(req) {
   const cache = await caches.open(CACHE);
   try {
-    const res = await withTimeout(fetch(req), req.mode === 'navigate' ? 4000 : 8000);
+    // no-cache revalidates with the server; plain fetch() would reuse the browser's 10-minute GitHub Pages cache.
+    const res = await withTimeout(fetch(req, { cache: 'no-cache' }), req.mode === 'navigate' ? 4000 : 8000);
     if (res.status === 200) cache.put(req, res.clone());
     return res;
   } catch (err) {

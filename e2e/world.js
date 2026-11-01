@@ -19,6 +19,7 @@ const ADMIN2_PASSWORD = 'second-admin-test';
 const ADMIN_EMAIL = 'admin@laurals.test';
 const ADMIN_PASSWORD = 'correct-horse-battery';
 const OWNER_PASSWORD = 'owner-test-pw';
+const OWNER_TOKEN = 'fake-owner-token';
 const RELAY_HOST = 'lauralshaven.andrewvijaykumar123.workers.dev';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
 
@@ -103,6 +104,11 @@ class Db {
     if (col === 'status') return op === 'get' ? signedIn : admin || ((op === 'create' || op === 'update') && this.validCancel(op, id, uid, data));
     if (col === 'config') return op === 'get' || op === 'list' ? true : admin;
     if (col === 'mail') return admin;
+    if (col === 'reportcfg') { // mirrors isOwner() and the reportcfg rules: only the owner's own sign-in, recipients doc only
+      if (uid !== 'owner') return false;
+      if (op === 'get' || op === 'list' || op === 'delete') return true;
+      return id === 'recipients' && Object.keys(data).every((k) => ['to', 'ts', 'by'].includes(k)) && Array.isArray(data.to) && data.to.length <= 10 && Number.isInteger(data.ts);
+    }
     if (col === 'mailq') return op === 'update' ? false : admin && (op !== 'create' || /^LH-[A-Z0-9]{6,10}_[pcorx]$/.test(id));
     return false;
   }
@@ -198,7 +204,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
   const db = new Db(LH);
   const { chromium } = loadPlaywright();
   const world = {
-    LH, db, port, emails: [], dispatches: [], ownerChecks: [], errors: [], pages: [], origin: `http://127.0.0.1:${port}`,
+    LH, db, port, emails: [], dispatches: [], ownerChecks: [], restCalls: [], errors: [], pages: [], origin: `http://127.0.0.1:${port}`,
     relay: { mode: 'ok', smtpMs: 600 }, // ok | unset (501) | old (400) | down (network error)
     t0: Date.now()
   };
@@ -243,7 +249,35 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
     const b = route.request().postDataJSON() || {};
     world.ownerChecks.push(b.email);
     const ok = b.email === 'andrewvijaykumar123@gmail.com' && b.password === OWNER_PASSWORD;
-    return route.fulfill({ status: ok ? 200 : 400, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(ok ? { localId: 'owner' } : { error: { message: 'INVALID_LOGIN_CREDENTIALS' } }) });
+    return route.fulfill({ status: ok ? 200 : 400, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(ok ? { localId: 'owner', idToken: OWNER_TOKEN } : { error: { message: 'INVALID_LOGIN_CREDENTIALS' } }) });
+  }
+
+  /* Firestore REST for reportcfg/recipients only (the owner-token path). Rules are enforced by Db.allowed. */
+  async function firestoreRoute(route) {
+    const req = route.request();
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, PATCH, OPTIONS' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const m = /\/documents\/(reportcfg\/[A-Za-z0-9_-]+)$/.exec(new URL(req.url()).pathname);
+    if (!m) return route.fulfill({ status: 404, headers: cors, body: '{}' });
+    const auth = req.headers().authorization || '';
+    const uid = auth === `Bearer ${OWNER_TOKEN}` ? 'owner' : auth === `Bearer fake-token-${ADMIN_UID}` ? ADMIN_UID : null;
+    const deny = () => route.fulfill({ status: 403, contentType: 'application/json', headers: cors, body: JSON.stringify({ error: { status: 'PERMISSION_DENIED' } }) });
+    world.restCalls.push({ method: req.method(), path: m[1], uid });
+    if (req.method() === 'GET') {
+      if (!db.allowed('get', m[1], uid, {})) return deny();
+      const d = db.docs.get(m[1]);
+      if (!d) return route.fulfill({ status: 404, contentType: 'application/json', headers: cors, body: '{}' });
+      return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify({ fields: { to: { arrayValue: d.to.length ? { values: d.to.map((s) => ({ stringValue: s })) } : {} }, ts: { integerValue: String(d.ts) }, by: { stringValue: d.by } } }) });
+    }
+    const f = (req.postDataJSON() || {}).fields || {};
+    const data = {};
+    Object.keys(f).forEach((k) => {
+      const v = f[k];
+      data[k] = k === 'to' ? ((v.arrayValue && v.arrayValue.values) || []).map((x) => x.stringValue) : 'integerValue' in v ? Number(v.integerValue) : v.stringValue;
+    });
+    if (!db.allowed(db.docs.has(m[1]) ? 'update' : 'create', m[1], uid, data)) return deny();
+    db.docs.set(m[1], data);
+    return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: '{}' });
   }
 
   /* kind: 'shop' | 'admin'. Each page gets its own browser context, like a separate phone. */
@@ -258,6 +292,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
       const host = new URL(route.request().url()).hostname;
       if (host === RELAY_HOST) return relayRoute(route);
       if (host === 'identitytoolkit.googleapis.com') return route.request().method() === 'OPTIONS' ? route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' } }) : ownerCheckRoute(route);
+      if (host === 'firestore.googleapis.com') return firestoreRoute(route);
       return route.abort();
     });
     const page = await ctx.newPage();
