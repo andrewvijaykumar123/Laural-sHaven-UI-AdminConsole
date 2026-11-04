@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Redirecting…</title>
+  <script>
+    (() => {
+      const segments = window.location.pathname.split('/').filter(Boolean);
+      const project = segments.length && !segments[0].includes('.') ? '/' + segments[0] : '';
+      const base = `${window.location.origin}${project}/`;
+      window.location.replace(`${base}${window.location.search}${window.location.hash}`);
+    })();
+  </script>
+</head>
+<body>
+  <p>Redirecting to the app…</p>
+</body>
+</html>
