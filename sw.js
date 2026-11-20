@@ -1,8 +1,8 @@
 // Offline support: the app shell is cached; live data stays with Firebase and its own offline cache.
 const CACHE = 'lh-shell-v4';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'luxe.css', 'fb-config.js', 'fb.js', 'core.js', 'map.js', 'map.css', 'mailtpl.js', 'app.js', 'pwa.js',
-  'manifest.webmanifest', 'assets/icon-192.png', 'assets/apple-touch-icon.png',
+  './', 'index.html', 'styles.css', 'luxe.css', 'fb-config.js', 'fb.js', 'core.js', 'map.js', 'map.css', 'mailtpl.js', 'invoicepdf.js', 'app.js', 'pwa.js',
+  'manifest.webmanifest', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/apple-touch-icon.png',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
 ];
 
@@ -57,4 +57,34 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(networkFirst(req));
+});
+
+/* Background notifications from the relay Worker: { t: title, b: text, g: tag, h: '#orders' | '#events' | '' }. */
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = {}; }
+  e.waitUntil((async () => {
+    // The app already shows it when it is open in front of the person.
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (wins.some((w) => w.visibilityState === 'visible' && w.focused)) return;
+    await self.registration.showNotification(String(d.t || "Laural's Haven").slice(0, 80), {
+      body: String(d.b || '').slice(0, 200),
+      tag: String(d.g || 'lh').slice(0, 60),
+      renotify: true,
+      icon: 'assets/icon-192.png',
+      badge: 'assets/icon-192.png',
+      data: { h: /^#[a-z]{1,12}$/.test(d.h) ? d.h : '' }
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const hash = (e.notification.data && e.notification.data.h) || '';
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins.find((w) => w.url.startsWith(self.registration.scope));
+    if (win) { await win.focus(); win.postMessage({ lhGo: hash }); return; }
+    await self.clients.openWindow(self.registration.scope + hash);
+  })());
 });

@@ -164,6 +164,7 @@
     renderAll();
     ensureWatch();
     renderRide();
+    initPush();
     setInterval(rideTick, 5000);
     LH.connect('orders');
     LH.connect('ops');
@@ -297,7 +298,7 @@
     toast(`New order ${o.id} · ${o.n} · ${fmt(o.total)}`, 'new');
     if (document.hidden) {
       document.title = `(New) ${baseTitle}`;
-      if ('Notification' in window && Notification.permission === 'granted') { try { new Notification(`New order ${o.id}`, { body: `${o.n} · ${fmt(o.total)}` }); } catch (e) { /* ignore */ } }
+      if ('Notification' in window && Notification.permission === 'granted' && !store.get('pushAdmin', false)) { try { new Notification(`New order ${o.id}`, { body: `${o.n} · ${fmt(o.total)}` }); } catch (e) { /* ignore */ } }
     }
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = baseTitle; });
@@ -1405,6 +1406,26 @@
     $('#cpIn').focus();
   }
 
+  /* ---------- Background notifications (Web Push) ---------- */
+  function renderPush() {
+    const p = LH.pushPermission();
+    const on = p === 'granted' && store.get('pushAdmin', false);
+    const btn = $('#notifyBtn');
+    btn.textContent = p === 'unsupported' ? 'Not supported' : p === 'denied' ? 'Blocked' : on ? 'Turn off' : 'Enable';
+    btn.disabled = p === 'unsupported' || p === 'denied';
+    $('#pushInfo').textContent = p === 'unsupported' ? 'This browser cannot receive background notifications. On iPhone, add the console to the Home Screen first.'
+      : p === 'denied' ? 'Blocked in the browser settings. Allow notifications for this site to turn them on.'
+        : on ? 'On: new orders, cancellations and bookings reach this device even when the console is closed.' : 'Get new orders, cancellations and bookings on this device even when the console is closed.';
+    $('#testPush').hidden = !on;
+    $('#pushBar').hidden = on || p === 'unsupported' || p === 'denied' || Date.now() - store.get('pushBarX', 0) < 7 * 864e5;
+  }
+  // A device that already agreed re-registers on every start, so a rotated browser subscription never goes quiet.
+  function initPush() {
+    renderPush();
+    if (LH.pushPermission() === 'granted' && !store.get('pushOff', false)) LH.pushEnable('admin', null, false).then(renderPush);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { const h = e.data && e.data.lhGo; if (typeof h === 'string' && TABS[h.slice(1)]) showTab(h.slice(1)); });
+  }
+
   function wireUI() {
     $('#cmdBtn').addEventListener('click', openPalette);
     document.addEventListener('keydown', (e) => {
@@ -1533,9 +1554,20 @@
     $('#soundToggle').addEventListener('change', toggleSound);
     $('#testSound').addEventListener('click', chime);
     $('#notifyBtn').addEventListener('click', async () => {
-      if (!('Notification' in window)) { toast('Notifications are not supported here.', 'bad'); return; }
-      const p = await Notification.requestPermission();
-      toast(p === 'granted' ? 'Desktop notifications enabled' : 'Notifications blocked in the browser', p === 'granted' ? 'ok' : 'bad');
+      if (store.get('pushAdmin', false) && LH.pushPermission() === 'granted') {
+        await LH.pushDisable();
+        toast('Background notifications are off for this device', 'ok');
+      } else {
+        const r = await LH.pushEnable('admin', null, true);
+        toast(r === 'on' ? 'Background notifications are on for this device' : r === 'denied' ? 'Notifications are blocked in the browser settings' : r === 'unsupported' ? 'This browser cannot receive background notifications' : r === 'default' ? 'Notifications were not allowed' : 'Could not turn on notifications. Check the connection and that the relay is set up.', r === 'on' ? 'ok' : 'bad');
+      }
+      renderPush();
+    });
+    $('#pushBarOn').addEventListener('click', () => $('#notifyBtn').click());
+    $('#pushBarX').addEventListener('click', () => { store.set('pushBarX', Date.now()); renderPush(); });
+    $('#testPush').addEventListener('click', async () => {
+      const ok = await LH.pushTest();
+      toast(ok ? 'Test notification sent' : 'The test notification could not be sent', ok ? 'ok' : 'bad');
     });
     $('#retrySend').addEventListener('click', () => { LH.flush(); toast('Retrying...'); });
     $('#ghSave').addEventListener('click', () => {

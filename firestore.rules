@@ -79,8 +79,10 @@ service cloud.firestore {
         && (d.svc == 'deliver' ? validDelivery(d) : !(('addr' in d) || ('lat' in d) || ('lng' in d) || ('fee' in d) || ('otp' in d)));
     }
 
-    // Private: only the admin can read orders. Customers can only create them, and only while the store is open.
+    // Private: only the admin can list or read everyone's orders. Customers can create orders (only while the store is open), and read back only their own by id.
     match /orders/{id} {
+      // A customer can read the order they placed: the push relay uses that, with the customer's own token, to check a new-order report is genuine.
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
       allow create: if signedIn() && storeOpen() && id.matches('LH-[A-Z0-9]{6,10}') && validOrder(request.resource.data, id);
       allow update, delete: if isAdmin();
@@ -134,8 +136,9 @@ service cloud.firestore {
         && (!('nt' in d) || (d.nt is string && d.nt.size() <= 200 && d.nt.matches('[^<>]*')));
     }
 
-    // Private: only the admin can read bookings. Customers can only create them.
+    // Private: only the admin can list or read everyone's bookings. Customers can create bookings, and read back only their own by id.
     match /events/{id} {
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
       allow read: if isAdmin();
       allow create: if signedIn() && eventsOn() && id.matches('EV-[A-Z0-9]{6,10}') && validEvent(request.resource.data, id);
       allow update, delete: if isAdmin();

@@ -1344,6 +1344,30 @@ async function until(fn, ms = 8000, step = 60) {
     await a.page.keyboard.press('Escape');
   });
 
+  /* ---------------- Background notifications reach the relay ---------------- */
+  await scenario('push: the relay is told about new orders and status changes', async () => {
+    const from = world.pushCalls.length;
+    const s = await newShop();
+    const a = await newAdmin();
+    const o = await place(s, { items: [0], svc: 'take' });
+    await closeModal(s);
+    const fresh = () => world.pushCalls.slice(from);
+    const notify = await until(() => fresh().find((c) => c.path === '/push/notify' && c.body.id === o.id));
+    check('the storefront reports a new order to the relay', !!notify && notify.body.k === 'order', JSON.stringify(fresh()));
+    check('using the customer\'s own sign-in, not the admin\'s', !!notify && notify.admin === false);
+    check('the success screen offers no alerts where the browser cannot do push', (await s.page.locator('#pushBox, #pushOn').count()) === 0);
+    await card(a, o.id).waitFor();
+    await act(a, o.id, 'accepted');
+    const st = await until(() => fresh().find((c) => c.path === '/push/status' && c.body.id === o.id && c.body.s === 'accepted'));
+    check('accepting the order tells the relay to notify the customer', !!st && st.admin === true && st.body.k === 'order', JSON.stringify(fresh()));
+    await act(a, o.id, 'cooking');
+    check('each later status is sent too', !!(await until(() => fresh().find((c) => c.path === '/push/status' && c.body.s === 'cooking'))));
+    check('no status push is sent for the pending state', !fresh().some((c) => c.path === '/push/status' && c.body.s === 'pending'));
+    await a.page.click('#nav [data-tab="settings"]');
+    check('the console explains when background notifications are not supported here', (await a.page.textContent('#pushInfo')).includes('cannot receive') && (await a.page.isDisabled('#notifyBtn')));
+    check('and shows no nag banner', await a.page.isHidden('#pushBar'));
+  });
+
   /* ---------------- Hostile or corrupted browser storage ---------------- */
   await scenario('storage: malformed saved data cannot break the storefront', async () => {
     const bad = () => {

@@ -477,6 +477,81 @@
     it: (Array.isArray(d.it) ? d.it : []).map((s) => { const i = String(s).lastIndexOf(':'); return [String(s).slice(0, i), Number(String(s).slice(i + 1))]; })
   });
 
+  /* ---------- Background notifications (Web Push through the relay Worker) ---------- */
+  const pushCfg = () => window.LH_PUSH || {};
+  const pushSupported = () => !!(pushCfg().key && pushCfg().url) && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && location.protocol === 'https:';
+  // 'unsupported', 'denied', 'default' (not asked yet) or 'granted'
+  const pushPermission = () => (pushSupported() ? Notification.permission : 'unsupported');
+  const keyBytes = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+
+  async function relayPost(path, body, asAdmin) {
+    const url = pushCfg().url;
+    if (!url) return false;
+    try {
+      const user = asAdmin ? await adminUser() : await ensureUser();
+      if (!user) return false;
+      const res = await fetch(`${url}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${await user.getIdToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return res.ok;
+    } catch (e) { return false; }
+  }
+
+  async function pushSubscription(create) {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, reject) => setTimeout(() => reject(new Error('No service worker')), 5000))]);
+    const key = keyBytes(pushCfg().key);
+    let sub = await reg.pushManager.getSubscription();
+    const cur = sub && sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if (cur && (cur.length !== key.length || cur.some((b, i) => b !== key[i]))) { await sub.unsubscribe(); sub = null; }
+    if (!sub && create) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    return sub;
+  }
+
+  /* Turns notifications on for this device: role 'admin' (the signed-in console) or 'shop' with the id of the order or booking to follow.
+     With ask it prompts for permission (call it from a tap); without, it only refreshes a device that already agreed. Returns on, denied, default, unsupported or error. */
+  async function pushEnable(role, id, ask) {
+    if (!pushSupported()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    if (Notification.permission !== 'granted') {
+      if (!ask) return 'default';
+      if ((await Notification.requestPermission()) !== 'granted') return Notification.permission === 'denied' ? 'denied' : 'default';
+    }
+    try {
+      const sub = await pushSubscription(true);
+      const ok = await relayPost('/push/sub', { role, ...(id ? { id, k: validEventId(id) ? 'event' : 'order' } : {}), sub: sub.toJSON() }, role === 'admin');
+      if (!ok) return 'error';
+      if (role === 'admin') { store.set('pushAdmin', true); store.set('pushOff', false); }
+      return 'on';
+    } catch (e) { return 'error'; }
+  }
+
+  async function pushDisable() {
+    store.set('pushAdmin', false);
+    store.set('pushOff', true); // an explicit opt-out: the console no longer re-subscribes by itself
+    if (!pushSupported()) return;
+    try {
+      const sub = await pushSubscription(false);
+      if (!sub) return;
+      await relayPost('/push/unsub', { endpoint: sub.endpoint }, true);
+      await sub.unsubscribe();
+    } catch (e) { /* nothing to undo */ }
+  }
+
+  async function pushTest() {
+    if (!pushSupported() || Notification.permission !== 'granted') return false;
+    try { return await relayPost('/push/test', { sub: (await pushSubscription(true)).toJSON() }, true); } catch (e) { return false; }
+  }
+
+  // Best effort and silent: tells the relay about a new order, booking or cancellation so it can alert the admin devices. Retries while the write may still be queued.
+  async function pushReport(k, id) {
+    if (!pushCfg().url) return;
+    for (const wait of [0, 8000, 30000]) {
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      if (await relayPost('/push/notify', { k, id })) return;
+    }
+  }
+  const PUSH_ORDER = ['accepted', 'cooking', 'ready', 'out', 'completed', 'rejected'];
+  const PUSH_EVENT = ['confirmed', 'declined', 'cancelled', 'completed'];
+  const pushStatus = (k, id, s, r) => { if (pushCfg().url && (k === 'event' ? PUSH_EVENT : PUSH_ORDER).includes(s)) relayPost('/push/status', { k, id, s, r: clean(r, 80) }, true); };
+
   async function publishOrder(draft) {
     const order = validateOrder({ ...draft, id: draft.id || newOrderId(), ts: now(), otp: draft.svc === 'deliver' ? (validOtp(draft.otp) ? draft.otp : newOtp()) : undefined });
     if (!order) throw new Error('Invalid order');
@@ -489,6 +564,7 @@
       delete order.otp;
       await send();
     }
+    pushReport('order', order.id);
     return order;
   }
 
@@ -501,6 +577,7 @@
     const sent = FB.setDoc(FB.doc(firebase().db, 'status', o.id), { s: 'rejected', r: CANCEL.REASON, ts, u: ts }, { merge: true });
     sent.catch(() => {});
     await Promise.race([sent, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Timed out'), { code: 'deadline-exceeded' })), 8000))]);
+    pushReport('cancel', o.id);
     return ts;
   }
 
@@ -533,6 +610,7 @@
     const { db } = firebase();
     const FB = window.LH_FB;
     await write(FB.setDoc(FB.doc(db, 'events', ev.id), { ...toEventDoc(ev), uid: user.uid, at: FB.serverTimestamp() }));
+    pushReport('event', ev.id);
     return ev;
   }
 
@@ -582,7 +660,9 @@
       // A finished order stops exposing the rider's position.
       const wipe = f.s === 'completed' || f.s === 'rejected' ? { lat: null, lng: null, acc: null, lts: null } : {};
       const how = f.s === 'completed' && (f.how === 'otp' || f.how === 'manual') ? { how: f.how } : {};
-      return write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...how, ...wipe }, { merge: true }));
+      const saved = await write(FB.setDoc(FB.doc(db, 'status', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...how, ...wipe }, { merge: true }));
+      pushStatus('order', f.id, f.s, f.r);
+      return saved;
     }
     if (f.k === 'loc') {
       const ids = (Array.isArray(f.ids) ? f.ids : [f.id]).filter(validId).slice(0, 10);
@@ -623,7 +703,9 @@
       if (!validEventId(f.id) || !Object.hasOwn(EVENT_STATUS, f.s)) throw new Error('Invalid event status');
       const mv = f.mv ? validMove(f.mv) : null;
       if (f.mv && !mv) throw new Error('Invalid new time');
-      return write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...(mv ? { mv } : {}) }, { merge: true }));
+      const saved = await write(FB.setDoc(FB.doc(db, 'evstatus', f.id), { s: f.s, r: clean(f.r, 80), ts, u: ts, ...(mv ? { mv } : {}) }, { merge: true }));
+      if (!mv) pushStatus('event', f.id, f.s, f.r);
+      return saved;
     }
     if (f.k === 'menu') return editMenu(f.op);
     if (f.k === 'evcfg') {
@@ -1012,6 +1094,7 @@
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,
     dateKey, parseDateKey, validDateKey, clock, eventRange, slotStr, parseSlot, slotsClash,
     store, now, on, emit, init, connect, watch, watchEv, flush,
+    pushSupported, pushPermission, pushEnable, pushDisable, pushTest,
     publishOrder, publishFeedback, publishEvent, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
     getEvCfg: () => evCfg,

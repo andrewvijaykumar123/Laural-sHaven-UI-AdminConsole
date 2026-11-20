@@ -447,3 +447,6 @@ p,.lead,.desc{text-wrap:pretty}
   .card:hover{transform:none}
   .aurora{transition:none}
 }
+/* ---------- Background alerts opt-in ---------- */
+.push-box{display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;margin:.9rem 0;padding:.85rem 1rem;border:1px solid var(--line2);border-radius:4px;background:var(--tint);font-size:.88rem}
+.push-note{margin:.8rem 0;color:var(--muted);font-size:.84rem}

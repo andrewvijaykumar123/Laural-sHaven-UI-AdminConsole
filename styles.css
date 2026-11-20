@@ -330,3 +330,5 @@ select{height:2.875rem}
 .cp-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.7rem .85rem;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .cp-item small{color:var(--muted)}
 .cp-item.on,.cp-item:hover{border-color:var(--accent);background:var(--tint)}
+.push-bar{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin:0 0 1rem;padding:.8rem 1rem;border:1px solid var(--line2);border-radius:4px;background:var(--tint);font-size:.9rem}
+.push-bar span{flex:1 1 16rem}

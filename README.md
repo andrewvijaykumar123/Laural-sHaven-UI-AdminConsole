@@ -64,6 +64,23 @@ How it is enforced:
 - The rules only bound the shape and size of the list, so the mailer checks every address again (format, length, duplicates, maximum 10, never the owner) before sending, and one failing address never stops the others or the owner copy.
 
 One-time setup: republish `firestore.rules` (adds `isOwner()` and the `reportcfg` collection). Until then the manager shows "Could not load/save".
+
+## Background notifications (Web Push)
+
+New orders, bookings and customer cancellations reach every admin device that turned notifications on, and customers who tap "Turn on alerts" get a notification when their order or booking changes status, even when the app or browser tab is closed. It works in Chrome, Edge, Firefox and Safari (iPhone and iPad: only after Add to Home Screen, iOS 16.4 or later). It does not work inside the Android or iOS wrapper apps (their web view has no Web Push); those need Firebase Cloud Messaging, which is not set up.
+
+How it works: the storefront tells the Worker (`POST /push/notify`) about a new order, booking or cancellation. The Worker reads that document from Firestore with the customer's own token (so a report cannot be faked) and sends an encrypted push to every registered admin device. When the admin changes a status, the console calls `POST /push/status` and the Worker pushes to the customer's device. Subscriptions live in a Cloudflare KV namespace; notifications carry no customer name or phone number.
+
+One-time setup (all of it is on your side; until it is done the app works as before and the Enable button reports an error):
+
+1. Republish `firestore.rules` (customers may now read back their own order and booking by id).
+2. In Cloudflare, create a KV namespace and bind it to the Worker as `PUSH`.
+3. Add the Worker secret `VAPID_PRIVATE_JWK` with the contents of `tools/vapid-private.json` (made by `node tools/gen-vapid.mjs`; the file is git-ignored, keep a backup). The matching public key is already in `LH_PUSH.key` in `fb-config.js` of both repos. Do not generate a new pair afterwards: every registered device would stop receiving notifications.
+4. Redeploy the Worker with the contents of `worker/relay.js`.
+5. On each admin device open Settings, Alerts, "Background notifications", press Enable and allow notifications, then "Send a test notification".
+
+Limits: the Worker removes a device when its push service says the subscription is gone; an admin device that stays unused for 90 days is forgotten (it re-registers on the next visit); a customer's subscription is kept 3 days for an order and 120 days for a booking.
+
 ## Tests
 
 `powershell

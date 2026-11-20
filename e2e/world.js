@@ -90,7 +90,7 @@ class Db {
     const signedIn = !!uid;
     if (col === 'events') {
       if (op === 'create') return signedIn && this.eventsOn() && /^EV-[A-Z0-9]{6,10}$/.test(id) && this.validEvent(data, id, uid);
-      return admin;
+      return admin || (op === 'get' && signedIn && (this.docs.get(p) || {}).uid === uid);
     }
     if (col === 'evstatus') return op === 'get' ? signedIn : admin;
     if (col === 'feedback') {
@@ -99,7 +99,7 @@ class Db {
     }
     if (col === 'orders') {
       if (op === 'create') return signedIn && this.cfg().open !== false && /^LH-[A-Z0-9]{6,10}$/.test(id) && this.validOrder(data, id, uid);
-      return admin;
+      return admin || (op === 'get' && signedIn && (this.docs.get(p) || {}).uid === uid);
     }
     if (col === 'status') return op === 'get' ? signedIn : admin || ((op === 'create' || op === 'update') && this.validCancel(op, id, uid, data));
     if (col === 'config') return op === 'get' || op === 'list' ? true : admin;
@@ -207,6 +207,7 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
   const world = {
     LH, db, port, emails: [], dispatches: [], ownerChecks: [], restCalls: [], errors: [], pages: [], origin: `http://127.0.0.1:${port}`,
     relay: { mode: 'ok', smtpMs: 600 }, // ok | unset (501) | old (400) | down (network error)
+    pushCalls: [], // every /push/* request the pages make to the relay
     t0: Date.now()
   };
   const dirs = { shop: shopDir, admin: adminDir };
@@ -231,6 +232,11 @@ async function createWorld({ shopDir, adminDir, port = 8130, headed = false } = 
     const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     if (world.relay.mode === 'down') return route.abort('failed');
+    const rpath = new URL(req.url()).pathname;
+    if (rpath.startsWith('/push/')) {
+      world.pushCalls.push({ t: Date.now(), path: rpath, admin: (req.headers().authorization || '') === `Bearer fake-token-${ADMIN_UID}`, body: req.postDataJSON() || {} });
+      return route.fulfill({ status: 204, headers: cors });
+    }
     const auth = req.headers().authorization || '';
     if (auth !== `Bearer fake-token-${ADMIN_UID}`) return route.fulfill({ status: 401, headers: cors, body: 'Unauthorized' });
     const body = req.postDataJSON() || {};
