@@ -1428,7 +1428,11 @@
   function initPush() {
     renderPush();
     if (LH.pushPermission() === 'granted' && !store.get('pushOff', false)) LH.pushEnable('admin', null, false).then(renderPush);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { const h = e.data && e.data.lhGo; if (typeof h === 'string' && TABS[h.slice(1)]) showTab(h.slice(1)); });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => {
+      const h = e.data && e.data.lhGo;
+      if (typeof h === 'string' && TABS[h.slice(1)]) showTab(h.slice(1));
+      if (e.data && e.data.lhPush) toast(`${e.data.lhPush.t}: ${e.data.lhPush.b}`, 'ok');
+    });
   }
 
   function wireUI() {
