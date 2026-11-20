@@ -1418,6 +1418,9 @@
         : on ? 'On: new orders, cancellations and bookings reach this device even when the console is closed.' : 'Get new orders, cancellations and bookings on this device even when the console is closed.';
     $('#testPush').hidden = !on;
     $('#pushBar').hidden = on || p === 'unsupported' || p === 'denied' || Date.now() - store.get('pushBarX', 0) < 864e5;
+    if (p === 'granted') {
+      LH.pushLastSeen().then((t) => { $('#pushInfo').textContent += t ? ` Last notification received on this device: ${ago(t)}.` : ' No notification has reached this device yet.'; });
+    }
   }
   // A device that already agreed re-registers on every start, so a rotated browser subscription never goes quiet.
   function initPush() {
@@ -1559,7 +1562,7 @@
         toast('Background notifications are off for this device', 'ok');
       } else {
         const r = await LH.pushEnable('admin', null, true);
-        toast(r === 'on' ? 'Background notifications are on for this device' : r === 'denied' ? 'Notifications are blocked in the browser settings' : r === 'unsupported' ? 'This browser cannot receive background notifications' : r === 'default' ? 'Notifications were not allowed' : 'Could not turn on notifications. Check the connection and that the relay is set up.', r === 'on' ? 'ok' : 'bad');
+        toast(r === 'on' ? 'Background notifications are on for this device' : r === 'denied' ? 'Notifications are blocked in the browser settings' : r === 'unsupported' ? 'This browser cannot receive background notifications' : r === 'default' ? 'Notifications were not allowed' : `Could not turn on notifications (${LH.pushWhy() || 'no answer from the relay'}).`, r === 'on' ? 'ok' : 'bad');
       }
       renderPush();
     });
@@ -1567,7 +1570,8 @@
     $('#pushBarX').addEventListener('click', () => { store.set('pushBarX', Date.now()); renderPush(); });
     $('#testPush').addEventListener('click', async () => {
       const ok = await LH.pushTest();
-      toast(ok ? 'Test notification sent' : 'The test notification could not be sent', ok ? 'ok' : 'bad');
+      toast(ok ? 'Test notification sent. It should appear within a few seconds.' : `The test notification could not be sent (${LH.pushWhy() || 'no answer from the relay'}).`, ok ? 'ok' : 'bad');
+      setTimeout(renderPush, 4000);
     });
     $('#retrySend').addEventListener('click', () => { LH.flush(); toast('Retrying...'); });
     $('#ghSave').addEventListener('click', () => {

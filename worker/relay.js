@@ -241,8 +241,11 @@ function cleanSub(s) {
   return { endpoint, keys: { p256dh: String(k.p256dh), auth: String(k.auth) } };
 }
 
-// 'sent', 'gone' (the subscription is dead and should be forgotten) or 'failed'.
+// 'sent', 'gone' (the subscription is dead and should be forgotten) or 'failed'. The last outcome is kept in KV (e:last) and logged, so a silent failure can be found.
+let lastPush = '';
 async function pushOne(env, sub, payload) {
+  let result = 'failed';
+  let detail = '';
   try {
     const body = await encryptPayload(sub, enc.encode(JSON.stringify(payload)));
     const r = await fetch(sub.endpoint, {
@@ -250,9 +253,15 @@ async function pushOne(env, sub, payload) {
       headers: { 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', TTL: '86400', Urgency: 'high', Authorization: await vapidAuth(sub.endpoint, env) },
       body
     });
-    if (r.status === 404 || r.status === 410) return 'gone';
-    return r.status >= 200 && r.status < 300 ? 'sent' : 'failed';
-  } catch (e) { return 'failed'; }
+    detail = `HTTP ${r.status}`;
+    if (r.status === 404 || r.status === 410) result = 'gone';
+    else if (r.status >= 200 && r.status < 300) result = 'sent';
+    else detail += ` ${(await r.text()).replace(/\s+/g, ' ').slice(0, 120)}`;
+  } catch (e) { detail = `error ${String((e && e.message) || e).slice(0, 120)}`; }
+  lastPush = `${result} (${detail})`;
+  console.log(`push ${new URL(sub.endpoint).host} ${lastPush}`);
+  try { await env.PUSH.put('e:last', JSON.stringify({ t: Date.now(), host: new URL(sub.endpoint).host, result, detail, tag: String(payload.g || '') }), { expirationTtl: 7 * 86400 }); } catch (e) { /* diagnostics only */ }
+  return result;
 }
 
 const hashOf = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].slice(0, 16).map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -293,12 +302,15 @@ function allowPush(uid, now = Date.now()) {
 
 async function alertAdmins(env, payload) {
   const { keys } = await env.PUSH.list({ prefix: 'a:', limit: MAX_ADMIN_DEVICES });
+  let sent = 0;
   await Promise.all(keys.map(async ({ name }) => {
     const rec = await env.PUSH.get(name, 'json');
     if (!rec || !rec.sub) return;
-    if ((await pushOne(env, rec.sub, payload)) === 'gone') await env.PUSH.delete(name);
+    const res = await pushOne(env, rec.sub, payload);
+    if (res === 'sent') sent++;
+    if (res === 'gone') await env.PUSH.delete(name);
   }));
-  return keys.length;
+  return { devices: keys.length, sent };
 }
 
 /* body: parsed JSON; who: { token, claims, admin }. Returns [status, text]. */
@@ -339,7 +351,8 @@ async function handlePush(path, body, who, env) {
     const text = what === 'event' ? ['New event request', `${body.id} \u00b7 ${Number(field(doc, 'g')) || 0} guests \u00b7 ${String(field(doc, 'd') || '').slice(0, 10)}`, '#events']
       : what === 'cancel' ? ['Order cancelled', `${body.id} was cancelled by the customer.`, '#orders']
         : ['New order', `${body.id} \u00b7 \u20b9${Number(field(doc, 'total')) || 0} \u00b7 ${SVC[field(doc, 'svc')] || 'Order'}`, '#orders'];
-    await alertAdmins(env, { t: text[0], b: text[1], g: `${what}-${body.id}`, h: text[2] });
+    const out = await alertAdmins(env, { t: text[0], b: text[1], g: `${what}-${body.id}`, h: text[2] });
+    if (out.devices && !out.sent) { await env.PUSH.delete(mark); return [502, 'No admin device accepted the notification']; }
     return [204, null];
   }
 
@@ -361,7 +374,7 @@ async function handlePush(path, body, who, env) {
     const sub = cleanSub(body.sub);
     if (!sub) return [400, 'Invalid subscription'];
     const res = await pushOne(env, sub, { t: "Laural's Haven", b: 'Notifications are on for this device.', g: 'test', h: '' });
-    return res === 'sent' ? [204, null] : [502, 'The push service did not accept the message'];
+    return res === 'sent' ? [204, null] : [502, `The push service did not accept the message: ${lastPush}`];
   }
 
   if (path === '/push/unsub') {

@@ -29,7 +29,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    for (const k of await caches.keys()) if (k !== CACHE && k !== 'lh-meta') await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -64,6 +64,8 @@ self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = {}; }
   e.waitUntil((async () => {
+    // Lets the app show whether pushes reach this device at all.
+    try { await (await caches.open('lh-meta')).put('push-last', new Response(JSON.stringify({ t: Date.now(), title: String(d.t || '') }))); } catch (err) { /* diagnostics only */ }
     // The app already shows it when it is open in front of the person.
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (wins.some((w) => w.visibilityState === 'visible' && w.focused)) return;

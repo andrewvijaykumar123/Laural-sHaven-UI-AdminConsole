@@ -484,15 +484,22 @@
   const pushPermission = () => (pushSupported() ? Notification.permission : 'unsupported');
   const keyBytes = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 
+  let relayWhy = '';
   async function relayPost(path, body, asAdmin) {
     const url = pushCfg().url;
     if (!url) return false;
     try {
       const user = asAdmin ? await adminUser() : await ensureUser();
-      if (!user) return false;
+      if (!user) { relayWhy = 'not signed in'; return false; }
       const res = await fetch(`${url}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${await user.getIdToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      relayWhy = res.ok ? '' : `${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`.trim();
       return res.ok;
-    } catch (e) { return false; }
+    } catch (e) { relayWhy = `network: ${String((e && e.message) || e).slice(0, 80)}`; return false; }
+  }
+
+  // When the service worker last received a push on this device (it records that itself), or 0.
+  async function pushLastSeen() {
+    try { const r = await (await caches.open('lh-meta')).match('push-last'); return r ? Number((await r.json()).t) || 0 : 0; } catch (e) { return 0; }
   }
 
   async function pushSubscription(create) {
@@ -1101,7 +1108,7 @@
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,
     dateKey, parseDateKey, validDateKey, clock, eventRange, slotStr, parseSlot, slotsClash,
     store, now, on, emit, init, connect, watch, watchEv, flush,
-    pushSupported, pushPermission, pushAllow, pushEnable, pushDisable, pushTest,
+    pushSupported, pushPermission, pushAllow, pushEnable, pushDisable, pushTest, pushLastSeen, pushWhy: () => relayWhy,
     publishOrder, publishFeedback, publishEvent, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
     getEvCfg: () => evCfg,
