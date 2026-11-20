@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const LH = window.LH;
+  const LHM = window.LHM;
   const { MENU, ITEMS, STATUS, NEXT, fmt, esc, store } = LH;
   LH.init('admin');
 
@@ -32,7 +33,7 @@
     el.className = `toast ${kind}`;
     el.textContent = msg;
     $('#toasts').appendChild(el);
-    setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 3800);
+    setTimeout(() => LHM.dismiss(el), 3800);
   }
   const openModal = (html) => { $('#modalCard').innerHTML = html; $('#modal').hidden = false; const b = $('#modalCard button'); if (b) b.focus(); };
   const closeModal = () => { $('#modal').hidden = true; };
@@ -143,8 +144,17 @@
     if (started) return;
     started = true;
     store.del('ghToken'); // the relay does the sending now; an old pasted token is no longer needed
+    const ico = !$('#lock').hidden && $('.lock-ico');
+    const from = ico && ico.getBoundingClientRect();
     $('#lock').hidden = true;
     $('#app').hidden = false;
+    // Unlocking opens the console as a circle growing out of the laurel.
+    if (from) {
+      const x = from.left + from.width / 2, y = from.top + from.height / 2;
+      LHM.play($('#app'), [{ clipPath: `circle(0px at ${x}px ${y}px)` }, { clipPath: `circle(${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px at ${x}px ${y}px)` }], { duration: 900, easing: LHM.EXPO });
+      LHM.haptic([10, 40, 18]);
+    }
+    addEventListener('resize', moveInk, { passive: true });
     ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach((ev) => window.addEventListener(ev, () => touch(), { passive: true, capture: true }));
     const checkIdle = () => { if (idleLeft() <= 0) lock(); };
     setInterval(checkIdle, 15000);
@@ -790,7 +800,21 @@
 
   const svcMatch = (f, o) => f === 'all' || (f === 'deliver' ? o.svc === 'deliver' : o.svc !== 'deliver');
   let boardSvc = 'all';
+  const celebrated = new Set();
   function renderBoard() {
+    LHM.flip($('#board'), '.ocard', (el) => el.dataset.id, paintBoard, { enter: false });
+    // A new order drops onto the board with a gold sweep and a spark burst, once per order.
+    $$('#board .ocard.fresh').forEach((c) => {
+      const id = c.dataset.id;
+      if (celebrated.has(id) || !c.offsetParent) return;
+      celebrated.add(id);
+      c.classList.add('arrive');
+      LHM.play(c, [{ transform: 'translateY(-3.5rem) scale(.82) rotate(-3deg)', opacity: 0 }, { transform: 'none', opacity: 1 }], { spring: 'bounce' });
+      setTimeout(() => { if (c.isConnected) LHM.burstAt(c, { count: 34, speed: 7, size: 3, life: 48 }); }, 260);
+      LHM.haptic([30, 50, 30]);
+    });
+  }
+  function paintBoard() {
     const today = startOfToday();
     const every = [...orders.values()].sort((a, b) => a.ts - b.ts);
     const all = every.filter((o) => svcMatch(boardSvc, o));
@@ -849,6 +873,8 @@
     const count = (s) => all.filter((o) => statusOf(o.id) === s).length;
     const dToday = t.filter((o) => o.svc === 'deliver');
     const dOpen = all.filter((o) => o.svc === 'deliver' && dvOpen(o)).length;
+    const prev = $$('#kpis .kpi b').map((b) => b.textContent);
+    const prevN = $('#navCount').textContent;
     $('#kpis').innerHTML = [
       kpi('New', count('pending'), 'awaiting action', '#fbbf24'),
       kpi('In kitchen', count('accepted') + count('cooking'), 'accepted + cooking', '#fb923c'),
@@ -857,8 +883,10 @@
       kpi('Deliveries today', dToday.length, `${dOpen} in progress · ${fmt(dToday.reduce((s, o) => s + (o.fee || 0), 0))} fees`, '#8b5cf6'),
       kpi('Sales today', fmt(money(t)), `avg ${fmt(t.length ? Math.round(money(t) / t.length) : 0)}`, '#a78bfa')
     ].join('');
+    if (prev.length) $$('#kpis .kpi b').forEach((b, i) => { if (b.textContent !== prev[i]) LHM.rise(b); });
     const n = count('pending');
     const nc = $('#navCount'); nc.hidden = !n; nc.textContent = n;
+    if (n && String(n) !== prevN) LHM.pop(nc, 1.5);
     const nd = $('#navDel'); nd.hidden = !dOpen; nd.textContent = dOpen;
   }
 
@@ -1319,6 +1347,8 @@
         .map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-restore-item="${it.id}" aria-label="Restore ${esc(it.name)}">Restore</button></div>`)
     ];
     const trash = bin.length ? `<section class="mcat" data-cat="_bin"><header><span style="font-size:1.5rem">🗑️</span><h3>Recently deleted</h3></header><div class="mgrid">${bin.join('')}</div></section>` : '';
+    // Sections and products glide to their new places after an edit, reorder, delete or restore.
+    LHM.flip($('#menuAdmin'), '.mcat>header, .mitem', (el) => (el.classList.contains('mitem') ? el.dataset.id || `b:${el.dataset.binCat}` : `h:${el.parentElement.dataset.cat}`), () => {
     $('#menuAdmin').innerHTML = MENU.map((c, i) => `<section class="mcat" data-cat="${c.id}" data-ord><header>
       <button class="grip" draggable="true" data-cat-grip="${c.id}" aria-label="Drag to reorder ${esc(c.name)}" title="Drag to reorder">⠿</button><span class="mico">${c.icon}</span>
       <div class="mt"><h3>${esc(c.name)}</h3>${c.tagline ? `<small class="muted">${esc(c.tagline)}</small>` : ''}</div>
@@ -1327,6 +1357,7 @@
       <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}${it.best ? ' <span class="pbest">Bestseller</span>' : ''}<small>${fmt(it.price)}${it.custom ? ' · added by you' : ''}${it.desc ? ` · ${esc(it.desc)}` : ''}</small></div>
         <button class="btn ghost sm" data-edit-item="${it.id}" aria-label="Edit ${esc(it.name)}">Edit</button>
         <label class="switch" title="Available"><input type="checkbox" data-item="${it.id}"><span class="track"></span></label></div>`).join('') || '<p class="muted">No products yet.</p>'}</div></section>`).join('') + hidden + trash;
+    });
   }
 
   function renderConfig() {
@@ -1365,8 +1396,14 @@
   const TABS = { orders: ['Live orders', 'Real-time kitchen board'], deliveries: ['Deliveries', 'Customer locations and live rider tracking'], events: ['Event bookings', 'Parties, celebrations and meetups at the cafe'], analytics: ['Analytics', 'Sales and performance insights'], menu: ['Menu & stock', 'Control availability on the storefront instantly'], history: ['Order history', 'Search, filter and export'], feedback: ['Customer feedback', 'Star ratings and comments about orders, products and service'], settings: ['Settings', 'Alerts, connection and data'] };
   function showTab(name) {
     if (!TABS[name]) name = 'orders';
+    const was = $('.tab.on');
     $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('.tab').forEach((t) => t.classList.toggle('on', t.id === `tab-${name}`));
+    moveInk();
+    if (started && was && was.id !== `tab-${name}`) {
+      LHM.rise($('#tabTitle'));
+      LHM.stagger($$(`#tab-${name} :is(.kpi, .panel, .mcat, .fbcard, .col, .ev-card)`), [{ transform: 'translateY(1.4rem) scale(.97)', opacity: 0 }, { transform: 'none', opacity: 1 }], { delay: 60, gap: 40, max: 12, spring: 'snap' });
+    }
     $('#tabTitle').textContent = TABS[name][0]; $('#tabSub').textContent = TABS[name][1];
     if (name === 'analytics') renderAnalytics();
     if (name === 'history') renderHistory();
@@ -1378,6 +1415,26 @@
   }
 
   /* ---------- Quick actions (Ctrl/Cmd+K): jump to a tab, a product or a section ---------- */
+  // The gold nav ink glides to the active tab.
+  function moveInk() {
+    const nav = $('#nav');
+    let ink = $('.nav-ink', nav);
+    const b = $('#nav button.on');
+    if (!ink) {
+      ink = document.createElement('span');
+      ink.className = 'nav-ink';
+      ink.setAttribute('aria-hidden', 'true');
+      ink.style.transition = 'none';
+      nav.prepend(ink);
+      nav.classList.add('has-ink');
+      requestAnimationFrame(() => requestAnimationFrame(() => { ink.style.transition = ''; }));
+    }
+    if (!b || !b.offsetWidth) { ink.style.opacity = '0'; return; }
+    ink.style.opacity = '1';
+    ink.style.width = `${b.offsetWidth}px`;
+    ink.style.height = `${b.offsetHeight}px`;
+    ink.style.transform = `translate(${b.offsetLeft}px,${b.offsetTop}px)`;
+  }
   function openPalette() {
     const cmds = [
       ...Object.entries(TABS).map(([k, v]) => ({ k: `Go to ${v[0]}`, run: () => showTab(k) })),
@@ -1403,6 +1460,7 @@
     });
     $('#cpList').addEventListener('click', (e) => { const b = e.target.closest('[data-cp]'); if (b) go(Number(b.dataset.cp)); });
     draw();
+    LHM.stagger($$('#cpList .cp-item'), [{ transform: 'translateY(.7rem)', opacity: 0 }, { transform: 'none', opacity: 1 }], { delay: 120, gap: 35, spring: 'snap' });
     $('#cpIn').focus();
   }
 
