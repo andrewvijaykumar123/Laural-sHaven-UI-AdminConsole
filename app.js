@@ -1417,7 +1417,7 @@
       : p === 'denied' ? 'Blocked in the browser settings. Allow notifications for this site to turn them on.'
         : on ? 'On: new orders, cancellations and bookings reach this device even when the console is closed.' : 'Get new orders, cancellations and bookings on this device even when the console is closed.';
     $('#testPush').hidden = !on;
-    $('#pushBar').hidden = on || p === 'unsupported' || p === 'denied' || Date.now() - store.get('pushBarX', 0) < 7 * 864e5;
+    $('#pushBar').hidden = on || p === 'unsupported' || p === 'denied' || Date.now() - store.get('pushBarX', 0) < 864e5;
   }
   // A device that already agreed re-registers on every start, so a rotated browser subscription never goes quiet.
   function initPush() {

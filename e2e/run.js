@@ -1355,6 +1355,7 @@ async function until(fn, ms = 8000, step = 60) {
     const notify = await until(() => fresh().find((c) => c.path === '/push/notify' && c.body.id === o.id));
     check('the storefront reports a new order to the relay', !!notify && notify.body.k === 'order', JSON.stringify(fresh()));
     check('using the customer\'s own sign-in, not the admin\'s', !!notify && notify.admin === false);
+    check('the storefront does not nag about alerts where the browser cannot do push', await s.page.isHidden('#pushBar'));
     check('the success screen offers no alerts where the browser cannot do push', (await s.page.locator('#pushBox, #pushOn').count()) === 0);
     await card(a, o.id).waitFor();
     await act(a, o.id, 'accepted');

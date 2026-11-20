@@ -1,0 +1,11 @@
+name = "lauralshaven"
+main = "worker/relay.js"
+compatibility_date = "2026-10-28"
+# Secrets (GH_TOKEN, GMAIL_APP_PASSWORD, VAPID_PRIVATE_JWK) are set with `wrangler secret put` and are never stored here.
+keep_vars = true
+workers_dev = true
+preview_urls = false
+
+[[kv_namespaces]]
+binding = "PUSH"
+id = "76431df6b5414256a59fb4d9dbd20588"

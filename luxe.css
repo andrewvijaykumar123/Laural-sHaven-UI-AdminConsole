@@ -450,3 +450,5 @@ p,.lead,.desc{text-wrap:pretty}
 /* ---------- Background alerts opt-in ---------- */
 .push-box{display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;margin:.9rem 0;padding:.85rem 1rem;border:1px solid var(--line2);border-radius:4px;background:var(--tint);font-size:.88rem}
 .push-note{margin:.8rem 0;color:var(--muted);font-size:.84rem}
+.push-bar{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin:0 0 1rem;padding:.8rem 1rem;border:1px solid var(--line2);border-radius:4px;background:var(--tint);font-size:.9rem}
+.push-bar span{flex:1 1 16rem}

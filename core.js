@@ -523,6 +523,13 @@
     } catch (e) { return 'error'; }
   }
 
+  // Asks the browser for notification permission only (call it from a tap); orders and bookings register themselves afterwards.
+  async function pushAllow() {
+    if (!pushSupported()) return 'unsupported';
+    if (Notification.permission === 'default') { try { await Notification.requestPermission(); } catch (e) { /* ask again later */ } }
+    return Notification.permission;
+  }
+
   async function pushDisable() {
     store.set('pushAdmin', false);
     store.set('pushOff', true); // an explicit opt-out: the console no longer re-subscribes by itself
@@ -1094,7 +1101,7 @@
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,
     dateKey, parseDateKey, validDateKey, clock, eventRange, slotStr, parseSlot, slotsClash,
     store, now, on, emit, init, connect, watch, watchEv, flush,
-    pushSupported, pushPermission, pushEnable, pushDisable, pushTest,
+    pushSupported, pushPermission, pushAllow, pushEnable, pushDisable, pushTest,
     publishOrder, publishFeedback, publishEvent, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
     getEvCfg: () => evCfg,

@@ -6,3 +6,4 @@ e2e/out/
 e2e/run.log
 e2e/run.err
 tools/vapid-private.json
+.wrangler/

@@ -71,14 +71,11 @@ New orders, bookings and customer cancellations reach every admin device that tu
 
 How it works: the storefront tells the Worker (`POST /push/notify`) about a new order, booking or cancellation. The Worker reads that document from Firestore with the customer's own token (so a report cannot be faked) and sends an encrypted push to every registered admin device. When the admin changes a status, the console calls `POST /push/status` and the Worker pushes to the customer's device. Subscriptions live in a Cloudflare KV namespace; notifications carry no customer name or phone number.
 
-One-time setup (all of it is on your side; until it is done the app works as before and the Enable button reports an error):
+Set up (done on 2026-11-20): the KV namespace `laurals-haven-push` is bound to the Worker as `PUSH` (see `wrangler.toml`), the secret `VAPID_PRIVATE_JWK` holds the contents of `tools/vapid-private.json` (made by `node tools/gen-vapid.mjs`; git-ignored, keep a backup, never regenerate or every registered device goes quiet), and `firestore.rules` is published. The public key is `LH_PUSH.key` in `fb-config.js` of both repos.
 
-1. Republish `firestore.rules` (customers may now read back their own order and booking by id).
-2. In Cloudflare, create a KV namespace and bind it to the Worker as `PUSH`.
-3. Add the Worker secret `VAPID_PRIVATE_JWK` with the contents of `tools/vapid-private.json` (made by `node tools/gen-vapid.mjs`; the file is git-ignored, keep a backup). The matching public key is already in `LH_PUSH.key` in `fb-config.js` of both repos. Do not generate a new pair afterwards: every registered device would stop receiving notifications.
-4. Redeploy the Worker with the contents of `worker/relay.js`.
-5. On each admin device open Settings, Alerts, "Background notifications", press Enable and allow notifications, then "Send a test notification".
+To redeploy the Worker after editing `worker/relay.js`: `npx wrangler deploy` from this folder (on the office network set `HTTPS_PROXY` to the system proxy and `NODE_OPTIONS=--use-system-ca` first). Secrets and the KV binding are kept. Rules: `npx firebase-tools deploy --only firestore:rules`.
 
+Turning it on is per device, because browsers only allow a notification prompt from a tap: the console shows a "Turn on" banner (and Settings, Alerts, Background notifications), and the storefront shows one on first visit. Install both as apps (Add to Home Screen on iPhone and iPad) and allow notifications once; after that every order and booking registers itself.
 Limits: the Worker removes a device when its push service says the subscription is gone; an admin device that stays unused for 90 days is forgotten (it re-registers on the next visit); a customer's subscription is kept 3 days for an order and 120 days for a booking.
 
 ## Tests
