@@ -330,3 +330,8 @@ select{height:2.875rem}
 .cp-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.7rem .85rem;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .cp-item small{color:var(--muted)}
 .cp-item.on,.cp-item:hover{border-color:var(--accent);background:var(--tint)}
+
+/* Map, Navigate and Track share one look: links and the button used to differ in underline, height and baseline. */
+div.oc-links{align-items:stretch;gap:.5rem}
+div.oc-links>a,div.oc-links>button{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:2.25rem;padding:0 .8rem;border:1px solid var(--line2);border-radius:2px;background:transparent;color:var(--accent);font:inherit;font-size:.8rem;font-weight:700;line-height:1;text-decoration:none;cursor:pointer;transition:border-color .2s,background .2s}
+div.oc-links>a:hover,div.oc-links>button:hover{border-color:var(--accent);background:var(--tint)}

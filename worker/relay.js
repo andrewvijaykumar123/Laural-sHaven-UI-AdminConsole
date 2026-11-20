@@ -329,7 +329,7 @@ async function handlePush(path, body, who, env) {
         const { keys } = await env.PUSH.list({ prefix: 'a:', limit: MAX_ADMIN_DEVICES + 1 });
         if (keys.length >= MAX_ADMIN_DEVICES) return [429, 'Too many admin devices'];
       }
-      await env.PUSH.put(key, JSON.stringify({ sub, ts: Date.now() }), { expirationTtl: 90 * DAY });
+      await env.PUSH.put(key, JSON.stringify({ sub, ts: Date.now(), ua: oneLine(who.ua).slice(0, 160) }), { expirationTtl: 90 * DAY });
       return [204, null];
     }
     if (!ID_RE[kind].test(String(body.id))) return [400, 'Invalid id'];
@@ -414,7 +414,7 @@ const worker = {
 
     if (path.startsWith('/push/')) {
       try {
-        const [status, text] = await handlePush(path, body, { token, claims, admin }, env);
+        const [status, text] = await handlePush(path, body, { token, claims, admin, ua: req.headers.get('User-Agent') || '' }, env);
         return reply(status, text);
       } catch (e) { return reply(502, 'Push failed'); }
     }

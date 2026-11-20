@@ -537,6 +537,25 @@
     return Notification.permission;
   }
 
+  // A one-line report of what stands between a push and the screen on this device, ending with a local notification that needs no network.
+  async function pushCheck() {
+    if (!pushSupported()) return 'This browser cannot receive background notifications.';
+    const out = [`permission: ${Notification.permission}`];
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      out.push(reg && reg.active ? 'service worker: running' : 'service worker: not running');
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      out.push(sub ? `subscription: yes (${new URL(sub.endpoint).host})` : 'subscription: none');
+      const t = await pushLastSeen();
+      out.push(t ? `last push received: ${new Date(t).toLocaleString()}` : 'last push received: never');
+      if (reg && Notification.permission === 'granted') {
+        await reg.showNotification("Laural's Haven", { body: 'If you can read this, this device can show notifications.', tag: 'local-check', icon: 'assets/icon-192.png' });
+        out.push('local notification: shown');
+      }
+    } catch (e) { out.push(`problem: ${String((e && e.message) || e).slice(0, 80)}`); }
+    return out.join(' | ');
+  }
+
   async function pushDisable() {
     store.set('pushAdmin', false);
     store.set('pushOff', true); // an explicit opt-out: the console no longer re-subscribes by itself
@@ -1108,7 +1127,7 @@
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,
     dateKey, parseDateKey, validDateKey, clock, eventRange, slotStr, parseSlot, slotsClash,
     store, now, on, emit, init, connect, watch, watchEv, flush,
-    pushSupported, pushPermission, pushAllow, pushEnable, pushDisable, pushTest, pushLastSeen, pushWhy: () => relayWhy,
+    pushSupported, pushPermission, pushAllow, pushEnable, pushDisable, pushTest, pushCheck, pushLastSeen, pushWhy: () => relayWhy,
     publishOrder, publishFeedback, publishEvent, publishAdmin, admin: adminAuth,
     getCfg: () => cfg,
     getEvCfg: () => evCfg,

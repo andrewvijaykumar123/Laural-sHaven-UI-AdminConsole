@@ -1416,6 +1416,8 @@
     $('#pushInfo').textContent = p === 'unsupported' ? 'This browser cannot receive background notifications. On iPhone, add the console to the Home Screen first.'
       : p === 'denied' ? 'Blocked in the browser settings. Allow notifications for this site to turn them on.'
         : on ? 'On: new orders, cancellations and bookings reach this device even when the console is closed.' : 'Get new orders, cancellations and bookings on this device even when the console is closed.';
+    // A computer only receives pushes while its browser is running; phones are woken by the system.
+    if (p === 'granted' && !/Android|iPhone|iPad/.test(navigator.userAgent)) $('#pushInfo').textContent += ' On a computer, keep Chrome or Edge running in the background (browser settings, System, "Continue running background apps when closed").';
     $('#testPush').hidden = !on;
     $('#pushBar').hidden = on || p === 'unsupported' || p === 'denied' || Date.now() - store.get('pushBarX', 0) < 864e5;
     if (p === 'granted') {
@@ -1568,6 +1570,10 @@
     });
     $('#pushBarOn').addEventListener('click', () => $('#notifyBtn').click());
     $('#pushBarX').addEventListener('click', () => { store.set('pushBarX', Date.now()); renderPush(); });
+    $('#checkPush').addEventListener('click', async () => {
+      $('#pushCheck').textContent = 'Checking...';
+      $('#pushCheck').textContent = await LH.pushCheck();
+    });
     $('#testPush').addEventListener('click', async () => {
       const ok = await LH.pushTest();
       toast(ok ? 'Test notification sent. It should appear within a few seconds.' : `The test notification could not be sent (${LH.pushWhy() || 'no answer from the relay'}).`, ok ? 'ok' : 'bad');
