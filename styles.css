@@ -302,3 +302,31 @@ select{height:2.875rem}
 .evcard .fb-who a{color:var(--accent);font-weight:700}
 .modal-card label.muted{display:block;font-size:.8rem;margin:.25rem 0 .2rem}
 .modal-card .acts{margin-top:.25rem}
+
+/* Menu management: sections and products */
+.mcat>header{flex-wrap:wrap;row-gap:.5rem}
+.mcat .mico{font-size:1.5rem;line-height:1}
+.mcat .mt{display:grid;min-width:0}.mcat .mt small{font-size:.78rem}
+.mcat>header .mtools{margin-left:auto;display:flex;flex-wrap:wrap;gap:.4rem}
+.mcat>header .mtools .btn{margin-left:0}
+.grip{flex:none;display:grid;place-items:center;width:2rem;min-height:2.75rem;border:0;background:none;color:var(--muted);font-size:1.25rem;cursor:grab;border-radius:.5rem}
+.grip:hover,.grip:focus-visible{color:var(--accent)}.grip:active{cursor:grabbing}
+.mcat.dragging{opacity:.45}
+.mcat.drop-before{box-shadow:0 -3px 0 var(--accent)}.mcat.drop-after{box-shadow:0 3px 0 var(--accent)}
+.pbest{display:inline-block;margin-left:.4rem;padding:.1rem .45rem;border:1px solid var(--accent);color:var(--accent);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;vertical-align:middle}
+.mform{display:grid;grid-template-columns:1fr 1fr;gap:0 .75rem}
+.mform select.pw-in{appearance:auto}
+.check,.radio{display:flex;align-items:center;gap:.6rem;margin:.4rem 0;font-size:.9rem;cursor:pointer}
+.radio .pw-in{width:auto;margin:0;flex:1}
+.mprev{display:flex;align-items:center;gap:.75rem;padding:.75rem .9rem;margin-bottom:.75rem;border:1px solid var(--line2,var(--line));background:var(--card);border-radius:4px}
+.mprev .pi{font-size:1.9rem;line-height:1}
+.mprev .pn{flex:1;min-width:0;display:grid}.mprev .pn small{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mprev .pp{font-family:var(--serif);font-size:1.3rem;color:var(--accent)}
+.mcat{container:mcat/inline-size}
+@container mcat (max-width:34rem){.mgrid{grid-template-columns:minmax(0,1fr)}.mcat>header .mtools{margin-left:0;width:100%}}
+@media (max-width:30rem){.mform{grid-template-columns:1fr}}
+.check input,.radio input{accent-color:var(--accent)}
+.cp-list{display:grid;gap:.25rem;margin-top:.5rem}
+.cp-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.7rem .85rem;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.cp-item small{color:var(--muted)}
+.cp-item.on,.cp-item:hover{border-color:var(--accent);background:var(--tint)}

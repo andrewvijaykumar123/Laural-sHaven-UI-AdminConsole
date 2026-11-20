@@ -76,22 +76,25 @@
   const BASE_ITEMS = new Map(BASE.flatMap((c) => c.items).map((i) => [i.id, i]));
 
   /* The owner's changes live in config/menu: price history (px: id -> ["ts:price", ...]), hidden items (hid), extra categories (cats)
-     extra products (items) and deleted items (del). ITEMS holds every item (hidden and deleted ones too, so old orders still read), MENU only what customers can order.
-     Both are rebuilt in place, so anything holding a reference to them sees the change. */
+     extra products (items) and deleted items (del). Built-in products and sections are edited through overrides (ov, cov); deleted sections
+     are tombstones (dcat, so they can be restored) and ord is the section order. ITEMS holds every item (hidden and deleted ones too, so old
+     orders still read), MENU only what customers can order. All are rebuilt in place, so anything holding a reference to them sees the change. */
   const ITEMS = new Map();
   const MENU = [];
   const HIDDEN = [];
-  const MENU_MAX = { items: 300, cats: 24, hist: 12, price: 9999 };
+  const GONE_CATS = [];
+  const MENU_MAX = { items: 300, cats: 24, catDocs: 60, hist: 12, price: 9999 };
   const DIET_IDS = ['v', 'e', 'n'];
-  let menuDoc = { ts: 0, px: {}, hid: [], del: [], cats: [], items: [] };
+  let menuDoc = { ts: 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
   const menuId = (s) => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(s);
   const okPrice = (p) => Number.isInteger(p) && p >= 1 && p <= MENU_MAX.price;
 
   function cleanMenu(d) {
-    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], del: [], cats: [], items: [] };
+    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
     if (!d || typeof d !== 'object') return o;
     const catIds = new Set(BASE.map((c) => c.id));
-    (Array.isArray(d.cats) ? d.cats : []).slice(0, MENU_MAX.cats).forEach((c) => {
+    const plain = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+    (Array.isArray(d.cats) ? d.cats : []).slice(0, MENU_MAX.catDocs).forEach((c) => {
       const name = c && clean(c.name, 40);
       if (!name || !menuId(c.id) || catIds.has(c.id)) return;
       catIds.add(c.id);
@@ -108,11 +111,42 @@
       const name = i && clean(i.name, 50);
       if (!name || !menuId(i.id) || itemIds.has(i.id) || !catIds.has(i.cat) || !px[i.id]) return;
       itemIds.add(i.id);
-      o.items.push({ id: i.id, name, cat: i.cat, diet: DIET_IDS.includes(i.diet) ? i.diet : 'v', icon: cleanIcon(i.icon) });
+      const it = { id: i.id, name, cat: i.cat, diet: DIET_IDS.includes(i.diet) ? i.diet : 'v', icon: cleanIcon(i.icon) };
+      const desc = clean(i.desc, 90);
+      if (desc) it.desc = desc;
+      if (i.best === true) it.best = true;
+      o.items.push(it);
     });
     Object.keys(px).forEach((id) => { if (itemIds.has(id)) o.px[id] = px[id]; });
     o.hid = [...new Set(Array.isArray(d.hid) ? d.hid : [])].filter((id) => itemIds.has(id));
     o.del = [...new Set(Array.isArray(d.del) ? d.del : [])].filter((id) => itemIds.has(id));
+    Object.keys(plain(d.ov)).filter((id) => BASE_ITEMS.has(id)).forEach((id) => {
+      const v = plain(d.ov[id]);
+      const e = {};
+      const name = clean(v.name, 50);
+      if (name) e.name = name;
+      const desc = clean(v.desc, 90);
+      if (desc) e.desc = desc;
+      if (DIET_IDS.includes(v.diet)) e.diet = v.diet;
+      const icon = cleanIcon(v.icon);
+      if (icon) e.icon = icon;
+      if (catIds.has(v.cat)) e.cat = v.cat;
+      if (typeof v.best === 'boolean') e.best = v.best;
+      if (Object.keys(e).length) o.ov[id] = e;
+    });
+    Object.keys(plain(d.cov)).filter((id) => BASE.some((c) => c.id === id)).forEach((id) => {
+      const v = plain(d.cov[id]);
+      const e = {};
+      const name = clean(v.name, 40);
+      if (name) e.name = name;
+      const icon = cleanIcon(v.icon);
+      if (icon) e.icon = icon;
+      if (typeof v.tagline === 'string') e.tagline = clean(v.tagline, 60);
+      if (Object.keys(e).length) o.cov[id] = e;
+    });
+    const ids = (v) => [...new Set(Array.isArray(v) ? v : [])].filter((id) => catIds.has(id));
+    o.dcat = ids(d.dcat);
+    o.ord = ids(d.ord);
     return o;
   }
 
@@ -120,20 +154,26 @@
     menuDoc = cleanMenu(d);
     const hid = new Set(menuDoc.hid);
     const del = new Set(menuDoc.del);
-    ITEMS.clear(); MENU.length = 0; HIDDEN.length = 0;
-    const cats = [...BASE.map((c) => ({ ...c, items: [] })), ...menuDoc.cats.map((c) => ({ ...c, custom: true, items: [] }))];
+    const dcat = new Set(menuDoc.dcat);
+    ITEMS.clear(); MENU.length = 0; HIDDEN.length = 0; GONE_CATS.length = 0;
+    const cats = [...BASE.map((c) => ({ ...c, ...menuDoc.cov[c.id], items: [] })), ...menuDoc.cats.map((c) => ({ ...c, custom: true, items: [] }))];
     const byCat = new Map(cats.map((c) => [c.id, c]));
     const put = (it) => {
-      const item = { ...it, hide: hid.has(it.id) || del.has(it.id), gone: del.has(it.id) };
+      const item = { ...it, gone: del.has(it.id) || dcat.has(it.cat) };
+      item.hide = hid.has(it.id) || item.gone;
       const h = menuDoc.px[it.id];
       if (h) item.price = h[h.length - 1][1];
       ITEMS.set(item.id, item);
+      byCat.get(item.cat).all.push(item);
       if (item.gone) return;
       (item.hide ? HIDDEN : byCat.get(item.cat).items).push(item);
     };
-    BASE.forEach((c) => c.items.forEach(put));
-    menuDoc.items.forEach((i) => put({ ...i, price: 0, best: false, custom: true, icon: i.icon || iconFor(i.name, byCat.get(i.cat).icon) }));
-    cats.forEach((c) => MENU.push(c));
+    cats.forEach((c) => { c.all = []; });
+    BASE.forEach((c) => c.items.forEach((i) => put({ ...i, ...menuDoc.ov[i.id] })));
+    menuDoc.items.forEach((i) => put({ ...i, price: 0, best: i.best === true, custom: true, icon: i.icon || iconFor(i.name, byCat.get(i.cat).icon) }));
+    const rank = new Map(menuDoc.ord.map((id, n) => [id, n]));
+    const at = (c) => (rank.has(c.id) ? rank.get(c.id) : menuDoc.ord.length);
+    cats.map((c, n) => [c, n]).sort((a, b) => at(a[0]) - at(b[0]) || a[1] - b[1]).forEach(([c]) => (dcat.has(c.id) ? GONE_CATS : MENU).push(c));
   }
   applyMenu(null);
 
@@ -602,7 +642,7 @@
 
   /* ---------- Menu editing (admin): every change rewrites config/menu whole ---------- */
   const wireMenu = (m) => ({
-    cats: m.cats, items: m.items, hid: m.hid, del: m.del,
+    cats: m.cats, items: m.items, hid: m.hid, del: m.del, ov: m.ov, cov: m.cov, dcat: m.dcat, ord: m.ord,
     px: Object.fromEntries(Object.entries(m.px).map(([id, h]) => [id, h.map(([t, p]) => `${t}:${p}`)]))
   });
   const uniqueId = (base, taken) => {
@@ -631,13 +671,17 @@
       if (!name || !cat || !okPrice(price)) throw new Error('Enter a name, category and a price between 1 and 9999');
       if (m.items.length >= MENU_MAX.items) throw new Error('The menu is full');
       const id = uniqueId(name, new Set([...ITEMS.keys()]));
-      m.items.push({ id, name, cat: cat.id, diet: DIET_IDS.includes(o.diet) ? o.diet : 'v', icon: cleanIcon(o.icon) });
+      const it = { id, name, cat: cat.id, diet: DIET_IDS.includes(o.diet) ? o.diet : 'v', icon: cleanIcon(o.icon) };
+      const desc = clean(o.desc, 90);
+      if (desc) it.desc = desc;
+      if (o.best === true) it.best = true;
+      m.items.push(it);
       m.px[id] = [[ts, price]];
     } else if (o.op === 'addcat') {
       const name = clean(o.name, 40);
       if (!name) throw new Error('Enter a category name');
-      if (m.cats.length >= MENU_MAX.cats) throw new Error('Too many categories');
-      const id = uniqueId(name, new Set(MENU.map((c) => c.id)));
+      if (m.cats.filter((c) => !m.dcat.includes(c.id)).length >= MENU_MAX.cats || m.cats.length >= MENU_MAX.catDocs) throw new Error('Too many categories');
+      const id = uniqueId(name, new Set([...MENU, ...GONE_CATS].map((c) => c.id)));
       m.cats.push({ id, name, icon: cleanIcon(o.icon) || '🍽️', hue: (200 + m.cats.length * 47) % 360, tagline: clean(o.tagline, 60) });
     } else if (o.op === 'hide') {
       if (!ITEMS.has(o.id)) throw new Error('Unknown item');
@@ -650,12 +694,81 @@
       m.del = [...new Set([...m.del, o.id])];
       m.hid = m.hid.filter((id) => id !== o.id);
     } else if (o.op === 'edit') {
-      const it = m.items.find((x) => x.id === o.id);
-      const name = clean(o.name, 50);
-      if (!it || !name) throw new Error('Only products you added can be renamed');
-      it.name = name;
-      if (DIET_IDS.includes(o.diet)) it.diet = o.diet;
-      if (o.icon !== undefined) it.icon = cleanIcon(o.icon);
+      const cur = ITEMS.get(o.id);
+      if (!cur || cur.gone) throw new Error('Unknown item');
+      const name = clean(o.name ?? cur.name, 50);
+      if (!name) throw new Error('Enter a product name');
+      const cat = o.cat === undefined ? null : MENU.find((c) => c.id === o.cat);
+      if (o.cat !== undefined && !cat) throw new Error('Pick a section for this product');
+      const next = {
+        name, cat: cat ? cat.id : cur.cat,
+        diet: DIET_IDS.includes(o.diet) ? o.diet : cur.diet,
+        icon: o.icon === undefined ? (cur.custom ? m.items.find((x) => x.id === o.id).icon : (m.ov[o.id] || {}).icon || '') : cleanIcon(o.icon),
+        desc: o.desc === undefined ? cur.desc || '' : clean(o.desc, 90),
+        best: o.best === undefined ? cur.best === true : o.best === true
+      };
+      const mine = m.items.find((x) => x.id === o.id);
+      if (mine) {
+        Object.assign(mine, { name: next.name, cat: next.cat, diet: next.diet, icon: next.icon });
+        if (next.desc) mine.desc = next.desc; else delete mine.desc;
+        if (next.best) mine.best = true; else delete mine.best;
+      } else {
+        const b = BASE_ITEMS.get(o.id);
+        const e = {};
+        if (next.name !== b.name) e.name = next.name;
+        if (next.cat !== b.cat) e.cat = next.cat;
+        if (next.diet !== b.diet) e.diet = next.diet;
+        if (next.icon) e.icon = next.icon;
+        if (next.desc) e.desc = next.desc;
+        if (next.best !== b.best) e.best = next.best;
+        if (Object.keys(e).length) m.ov[o.id] = e; else delete m.ov[o.id];
+      }
+    } else if (o.op === 'editcat') {
+      const cur = MENU.find((c) => c.id === o.id);
+      if (!cur) throw new Error('Unknown section');
+      const name = clean(o.name ?? cur.name, 40);
+      if (!name) throw new Error('Enter a section name');
+      const icon = o.icon === undefined ? cur.icon : cleanIcon(o.icon) || cur.icon;
+      const tagline = o.tagline === undefined ? cur.tagline : clean(o.tagline, 60);
+      const mine = m.cats.find((c) => c.id === o.id);
+      if (mine) Object.assign(mine, { name, icon, tagline });
+      else {
+        const b = BASE.find((c) => c.id === o.id);
+        const e = {};
+        if (name !== b.name) e.name = name;
+        if (icon !== b.icon) e.icon = icon;
+        if (tagline !== b.tagline) e.tagline = tagline;
+        if (Object.keys(e).length) m.cov[o.id] = e; else delete m.cov[o.id];
+      }
+    } else if (o.op === 'delcat') {
+      const cur = MENU.find((c) => c.id === o.id);
+      if (!cur) throw new Error('Unknown section');
+      if (MENU.length < 2) throw new Error('Keep at least one section');
+      if (o.moveTo) {
+        const to = MENU.find((c) => c.id === o.moveTo && c.id !== o.id);
+        if (!to) throw new Error('Pick another section to move the products to');
+        cur.all.forEach((it) => {
+          const mine = m.items.find((x) => x.id === it.id);
+          if (mine) mine.cat = to.id;
+          else m.ov[it.id] = { ...(m.ov[it.id] || {}), cat: to.id };
+        });
+      }
+      m.dcat = [...new Set([...m.dcat, o.id])];
+      m.ord = m.ord.filter((id) => id !== o.id);
+    } else if (o.op === 'restorecat') {
+      if (!m.dcat.includes(o.id)) throw new Error('Unknown section');
+      m.dcat = m.dcat.filter((id) => id !== o.id);
+    } else if (o.op === 'restore') {
+      const it = ITEMS.get(o.id);
+      if (!it || !m.del.includes(o.id)) throw new Error('Unknown item');
+      if (m.dcat.includes(it.cat)) throw new Error('Restore its section first');
+      m.del = m.del.filter((id) => id !== o.id);
+    } else if (o.op === 'ordcat') {
+      const live = new Set(MENU.map((c) => c.id));
+      const ids = [...new Set(Array.isArray(o.ids) ? o.ids : [])].filter((id) => live.has(id));
+      if (ids.length !== live.size) throw new Error('Unknown section order');
+      if (ids.every((id, n) => MENU[n].id === id)) return null;
+      m.ord = ids;
     } else throw new Error('Unknown menu change');
     return { ...wireMenu(m), ts };
   }
@@ -893,7 +1006,7 @@
   }
 
   window.LH = {
-    UPI, MENU, ITEMS, HIDDEN, STATUS, NEXT, nextFor, statusLabel, CANCEL, cancelLeft, cancelOrder, priceAt, unit, applyMenu, getMenuDoc: () => menuDoc, validMove, moveEvent,
+    UPI, MENU, ITEMS, HIDDEN, GONE_CATS, menuAfter, STATUS, NEXT, nextFor, statusLabel, CANCEL, cancelLeft, cancelOrder, priceAt, unit, applyMenu, getMenuDoc: () => menuDoc, validMove, moveEvent,
     SHOP, DELIVERY_KM, FREE_KM, MID_KM, RATE_MID, RATE_FAR, deliveryFee, deliveryStats, distKm, fromShopKm, inRange, validPoint, etaMin,
     fmt, esc, clean, slug, randomString, newOrderId, validId, validOtp, newOtp, priceLines, validateOrder, validateFeedback,
     EVENT, EVENT_TYPES, EVENT_TYPE, EVENT_STATUS, EVENT_NEXT, eventQuote, newEventId, validEventId, validateEvent, inEventWindow,

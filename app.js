@@ -16,7 +16,15 @@
   /* ---------- Theme ---------- */
   const setTheme = (t) => { document.documentElement.dataset.theme = t; store.set('theme', t); };
   setTheme(store.get('theme', 'dark'));
-  $('#themeBtn').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+  $('#themeBtn').addEventListener('click', (e) => {
+    const next = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches || document.visibilityState !== 'visible') { next(); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const end = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    document.startViewTransition(next).ready.then(() => document.documentElement.animate({ clipPath: [`circle(0 at ${x}px ${y}px)`, `circle(${end}px at ${x}px ${y}px)`] }, { duration: 700, easing: 'cubic-bezier(.22,.8,.24,1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+  });
 
   /* ---------- Toasts and modal ---------- */
   function toast(msg, kind = '') {
@@ -1175,25 +1183,44 @@
   const catName = (id) => (MENU.find((c) => c.id === id) || {}).name || '';
   const dietOptions = (cur) => [['v', 'Veg'], ['e', 'Egg'], ['n', 'Non-veg']].map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('');
 
+  const sectionOptions = (cur) => MENU.map((c) => `<option value="${c.id}"${c.id === cur ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  const previewCard = (icon, name, desc, price, best) => `<span class="pi">${esc(icon)}</span><span class="pn"><b>${esc(name)}</b><small>${esc(desc)}</small></span><span class="pp">${fmt(price)}</span>${best ? '<span class="pbest">Bestseller</span>' : ''}`;
+
   function askItem(id) {
     const it = ITEMS.get(id);
-    if (!it) return;
-    openModal(`<h3>${it.icon} ${esc(it.name)}</h3>
-      <label class="muted" for="miPrice">Price (₹)</label><input class="pw-in" id="miPrice" type="number" inputmode="numeric" min="1" max="9999" step="1" value="${it.price}">
-      ${it.custom ? `<label class="muted" for="miName">Name</label><input class="pw-in" id="miName" maxlength="50" value="${esc(it.name)}">
-      <label class="muted" for="miDiet">Type</label><select class="pw-in" id="miDiet">${dietOptions(it.diet)}</select>` : ''}
+    if (!it || it.gone) return;
+    openModal(`<h3>Edit product</h3>
+      <div class="mprev" id="miPrev" aria-hidden="true"></div>
+      <label class="muted" for="miName">Name</label><input class="pw-in" id="miName" maxlength="50" value="${esc(it.name)}">
+      <label class="muted" for="miDesc">Short description (optional)</label><input class="pw-in" id="miDesc" maxlength="90" value="${esc(it.desc || '')}" placeholder="e.g. Slow-brewed with ginger and cardamom">
+      <div class="mform">
+        <div><label class="muted" for="miPrice">Price (₹)</label><input class="pw-in" id="miPrice" type="number" inputmode="numeric" min="1" max="9999" step="1" value="${it.price}"></div>
+        <div><label class="muted" for="miCat">Section</label><select class="pw-in" id="miCat">${sectionOptions(it.cat)}</select></div>
+        <div><label class="muted" for="miDiet">Type</label><select class="pw-in" id="miDiet">${dietOptions(it.diet)}</select></div>
+        <div><label class="muted" for="miIcon">Emoji</label><input class="pw-in" id="miIcon" maxlength="8" value="${esc(it.icon)}"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="miBest"${it.best ? ' checked' : ''}> Show as a bestseller</label>
       <p class="muted" style="margin:4px 0 12px">New orders use the new price. Orders already placed keep the price they were placed at.</p>
-      <div class="acts"><button class="btn primary" id="miSave">Save</button><button class="btn ghost" id="miHide">Hide from menu</button><button class="btn ghost" id="miDel">Delete</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+      <div class="acts"><button class="btn primary" id="miSave">Save changes</button><button class="btn ghost" id="miHide">${it.hide ? 'Show on menu' : 'Hide from menu'}</button><button class="btn ghost" id="miDel">Delete</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    const preview = () => {
+      $('#miPrev').innerHTML = previewCard(LH.clean($('#miIcon').value, 8) || it.icon, LH.clean($('#miName').value, 50) || it.name, LH.clean($('#miDesc').value, 90), Math.floor(Number($('#miPrice').value)) || it.price, $('#miBest').checked);
+    };
+    preview();
+    $$('#miName,#miDesc,#miPrice,#miIcon,#miBest').forEach((el) => el.addEventListener('input', preview));
     $('#miSave').onclick = async () => {
       const price = Math.floor(Number($('#miPrice').value));
-      const name = it.custom ? $('#miName').value : '';
-      const diet = it.custom ? $('#miDiet').value : '';
-      if (it.custom && (name.trim() !== it.name || diet !== it.diet)) { if (!(await menuCall({ op: 'edit', id, name, diet }))) return; }
+      if (!(price >= 1 && price <= 9999)) { toast('Enter a price between 1 and 9999', 'bad'); return; }
+      const op = { op: 'edit', id };
+      const f = { name: LH.clean($('#miName').value, 50), desc: LH.clean($('#miDesc').value, 90), cat: $('#miCat').value, diet: $('#miDiet').value, icon: LH.clean($('#miIcon').value, 8), best: $('#miBest').checked };
+      Object.entries(f).forEach(([k, v]) => { if (v !== (k === 'desc' ? it.desc || '' : it[k]) && !(k === 'best' && v === (it.best === true))) op[k] = v; });
+      if (Object.keys(op).length > 2 && !(await menuCall(op))) return;
       if (price !== it.price && !(await menuCall({ op: 'price', id, price }))) return;
       closeModal();
       toast(`${ITEMS.get(id).name} saved`, 'ok');
     };
-    $('#miHide').onclick = async () => { if (await menuCall({ op: 'hide', id, hide: true }, `${it.name} is hidden from customers`)) closeModal(); };
+    $('#miHide').onclick = async () => {
+      if (await menuCall({ op: 'hide', id, hide: !it.hide }, it.hide ? `${it.name} is back on the menu` : `${it.name} is hidden from customers`)) closeModal();
+    };
     $('#miDel').onclick = () => askDeleteItem(id);
   }
 
@@ -1201,7 +1228,7 @@
     const it = ITEMS.get(id);
     if (!it || it.gone) return;
     openModal(`<h3>Delete ${it.icon} ${esc(it.name)}?</h3>
-      <p class="muted" style="margin:4px 0 12px">It is removed from the menu for good and cannot be restored here. Orders already placed keep its name and price. To take it off the menu for now, use Hide instead.</p>
+      <p class="muted" style="margin:4px 0 12px">It is removed from the menu and moved to Recently deleted, where you can restore it. Orders already placed keep its name and price. To take it off the menu for now, use Hide instead.</p>
       <div class="acts"><button class="btn danger" id="delYes">Delete product</button><button class="btn ghost" data-modal-close>Keep it</button></div>`);
     $('#delYes').onclick = async () => { if (await menuCall({ op: 'remove', id }, `${it.name} deleted`)) closeModal(); };
   }
@@ -1209,15 +1236,63 @@
   function askAddProduct(cat) {
     openModal(`<h3>Add a product</h3>
       <label class="muted" for="apName">Name</label><input class="pw-in" id="apName" maxlength="50" placeholder="e.g. Cold Coffee">
-      <label class="muted" for="apCat">Category</label><select class="pw-in" id="apCat">${MENU.map((c) => `<option value="${c.id}"${c.id === cat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-      <label class="muted" for="apPrice">Price (₹)</label><input class="pw-in" id="apPrice" type="number" inputmode="numeric" min="1" max="9999" step="1">
-      <label class="muted" for="apDiet">Type</label><select class="pw-in" id="apDiet">${dietOptions('v')}</select>
-      <label class="muted" for="apIcon">Emoji (optional)</label><input class="pw-in" id="apIcon" maxlength="8" placeholder="picked automatically if empty">
+      <label class="muted" for="apDesc">Short description (optional)</label><input class="pw-in" id="apDesc" maxlength="90" placeholder="e.g. Chilled, creamy and lightly sweet">
+      <div class="mform">
+        <div><label class="muted" for="apCat">Section</label><select class="pw-in" id="apCat">${sectionOptions(cat)}</select></div>
+        <div><label class="muted" for="apPrice">Price (₹)</label><input class="pw-in" id="apPrice" type="number" inputmode="numeric" min="1" max="9999" step="1"></div>
+        <div><label class="muted" for="apDiet">Type</label><select class="pw-in" id="apDiet">${dietOptions('v')}</select></div>
+        <div><label class="muted" for="apIcon">Emoji (optional)</label><input class="pw-in" id="apIcon" maxlength="8" placeholder="auto if empty"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="apBest"> Show as a bestseller</label>
       <div class="acts"><button class="btn primary" id="apSave">Add product</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
     $('#apSave').onclick = async () => {
       const name = $('#apName').value;
-      if (await menuCall({ op: 'add', name, cat: $('#apCat').value, price: Math.floor(Number($('#apPrice').value)), diet: $('#apDiet').value, icon: $('#apIcon').value }, `${LH.clean(name, 50)} added to the menu`)) closeModal();
+      if (await menuCall({ op: 'add', name, cat: $('#apCat').value, price: Math.floor(Number($('#apPrice').value)), diet: $('#apDiet').value, icon: $('#apIcon').value, desc: $('#apDesc').value, best: $('#apBest').checked }, `${LH.clean(name, 50)} added to the menu`)) closeModal();
     };
+  }
+
+  function askEditCategory(id) {
+    const c = MENU.find((x) => x.id === id);
+    if (!c) return;
+    openModal(`<h3>Edit section</h3>
+      <label class="muted" for="ecName">Name</label><input class="pw-in" id="ecName" maxlength="40" value="${esc(c.name)}">
+      <label class="muted" for="ecIcon">Emoji</label><input class="pw-in" id="ecIcon" maxlength="8" value="${esc(c.icon)}">
+      <label class="muted" for="ecTag">Short tagline (optional)</label><input class="pw-in" id="ecTag" maxlength="60" value="${esc(c.tagline)}">
+      <div class="acts"><button class="btn primary" id="ecSave">Save section</button><button class="btn ghost" id="ecDel">Delete section</button><button class="btn ghost" data-modal-close>Cancel</button></div>`);
+    $('#ecSave').onclick = async () => {
+      const f = { name: LH.clean($('#ecName').value, 40), icon: LH.clean($('#ecIcon').value, 8), tagline: LH.clean($('#ecTag').value, 60) };
+      const op = { op: 'editcat', id };
+      Object.entries(f).forEach(([k, v]) => { if (v !== c[k]) op[k] = v; });
+      if (Object.keys(op).length === 2) { closeModal(); return; }
+      if (await menuCall(op, `${f.name || c.name} saved`)) closeModal();
+    };
+    $('#ecDel').onclick = () => askDeleteCategory(id);
+  }
+
+  function askDeleteCategory(id) {
+    const c = MENU.find((x) => x.id === id);
+    if (!c) return;
+    if (MENU.length < 2) { toast('Keep at least one section on the menu.', 'bad'); return; }
+    const n = c.all.length;
+    const others = MENU.filter((x) => x.id !== id);
+    openModal(`<h3>Delete ${c.icon} ${esc(c.name)}?</h3>
+      ${n ? `<p class="muted" style="margin:4px 0 12px">This section has ${n} product${n === 1 ? '' : 's'}. What should happen to ${n === 1 ? 'it' : 'them'}?</p>
+      <label class="radio"><input type="radio" name="dcMode" value="move" checked> Move to <select class="pw-in" id="dcTo" aria-label="Move products to">${others.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="radio"><input type="radio" name="dcMode" value="del"> Remove ${n === 1 ? 'it' : 'them'} with the section</label>` : '<p class="muted" style="margin:4px 0 12px">This section is empty.</p>'}
+      <p class="muted" style="margin:4px 0 12px">Deleted sections go to Recently deleted, where you can restore them. Orders already placed keep their names and prices.</p>
+      <div class="acts"><button class="btn danger" id="dcYes">Delete section</button><button class="btn ghost" data-modal-close>Keep it</button></div>`);
+    if (n) $('#dcTo').onchange = () => { $('input[name="dcMode"][value="move"]').checked = true; };
+    $('#dcYes').onclick = async () => {
+      const op = { op: 'delcat', id };
+      if (n && $('input[name="dcMode"]:checked').value === 'move') op.moveTo = $('#dcTo').value;
+      if (await menuCall(op, `${c.name} deleted`)) closeModal();
+    };
+  }
+
+  async function moveCat(id, ids) {
+    await menuCall({ op: 'ordcat', ids }, 'Section order saved');
+    const b = $(`[data-cat-grip="${id}"]`);
+    if (b) b.focus();
   }
 
   function askAddCategory() {
@@ -1235,12 +1310,22 @@
 
   function buildMenuAdmin() {
     const hidden = LH.HIDDEN.length ? `<section class="mcat" data-cat="_hidden"><header><span style="font-size:1.5rem">🙈</span><h3>Hidden from customers</h3></header>
-      <div class="mgrid">${LH.HIDDEN.map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-show-item="${it.id}">Show</button><button class="btn ghost sm" data-del-item="${it.id}" aria-label="Delete ${esc(it.name)}">Delete</button></div>`).join('')}</div></section>` : '';
-    $('#menuAdmin').innerHTML = MENU.map((c) => `<section class="mcat" data-cat="${c.id}"><header><span style="font-size:1.5rem">${c.icon}</span><h3>${esc(c.name)}</h3>
-      <button class="btn ghost sm" data-add-in="${c.id}">+ Add product</button>${c.items.length ? `<button class="btn ghost sm" data-cat-out="${c.id}" style="margin-left:0">Toggle all</button>` : ''}</header>
-      <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${fmt(it.price)}${it.custom ? ' · added by you' : ''}</small></div>
+      <div class="mgrid">${LH.HIDDEN.map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-edit-item="${it.id}" aria-label="Edit ${esc(it.name)}">Edit</button><button class="btn ghost sm" data-show-item="${it.id}">Show</button><button class="btn ghost sm" data-del-item="${it.id}" aria-label="Delete ${esc(it.name)}">Delete</button></div>`).join('')}</div></section>` : '';
+    const doc = LH.getMenuDoc();
+    const bin = [
+      ...LH.GONE_CATS.map((c) => `<div class="mitem out" data-bin-cat="${c.id}"><div class="nm">${c.icon} ${esc(c.name)}<small>Section · ${c.all.length} product${c.all.length === 1 ? '' : 's'}</small></div><button class="btn ghost sm" data-restore-cat="${c.id}" aria-label="Restore section ${esc(c.name)}">Restore</button></div>`),
+      ...doc.del.map((id) => ITEMS.get(id)).filter((it) => it && !LH.GONE_CATS.some((c) => c.id === it.cat))
+        .map((it) => `<div class="mitem out" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}<small>${esc(catName(it.cat))} · ${fmt(it.price)}</small></div><button class="btn ghost sm" data-restore-item="${it.id}" aria-label="Restore ${esc(it.name)}">Restore</button></div>`)
+    ];
+    const trash = bin.length ? `<section class="mcat" data-cat="_bin"><header><span style="font-size:1.5rem">🗑️</span><h3>Recently deleted</h3></header><div class="mgrid">${bin.join('')}</div></section>` : '';
+    $('#menuAdmin').innerHTML = MENU.map((c, i) => `<section class="mcat" data-cat="${c.id}" data-ord><header>
+      <button class="grip" draggable="true" data-cat-grip="${c.id}" aria-label="Drag to reorder ${esc(c.name)}" title="Drag to reorder">⠿</button><span class="mico">${c.icon}</span>
+      <div class="mt"><h3>${esc(c.name)}</h3>${c.tagline ? `<small class="muted">${esc(c.tagline)}</small>` : ''}</div>
+      <div class="mtools"><button class="btn ghost sm" data-cat-up="${c.id}"${i ? '' : ' disabled'} aria-label="Move ${esc(c.name)} up">↑</button><button class="btn ghost sm" data-cat-down="${c.id}"${i < MENU.length - 1 ? '' : ' disabled'} aria-label="Move ${esc(c.name)} down">↓</button>
+      <button class="btn ghost sm" data-edit-cat="${c.id}">Edit section</button><button class="btn ghost sm" data-add-in="${c.id}">+ Add product</button>${c.items.length ? `<button class="btn ghost sm" data-cat-out="${c.id}">Toggle all</button>` : ''}</div></header>
+      <div class="mgrid">${c.items.map((it) => `<div class="mitem" data-id="${it.id}"><div class="nm">${it.icon} ${esc(it.name)}${it.best ? ' <span class="pbest">Bestseller</span>' : ''}<small>${fmt(it.price)}${it.custom ? ' · added by you' : ''}${it.desc ? ` · ${esc(it.desc)}` : ''}</small></div>
         <button class="btn ghost sm" data-edit-item="${it.id}" aria-label="Edit ${esc(it.name)}">Edit</button>
-        <label class="switch" title="Available"><input type="checkbox" data-item="${it.id}"><span class="track"></span></label></div>`).join('') || '<p class="muted">No products yet.</p>'}</div></section>`).join('') + hidden;
+        <label class="switch" title="Available"><input type="checkbox" data-item="${it.id}"><span class="track"></span></label></div>`).join('') || '<p class="muted">No products yet.</p>'}</div></section>`).join('') + hidden + trash;
   }
 
   function renderConfig() {
@@ -1259,7 +1344,7 @@
 
   function filterMenuAdmin() {
     const q = $('#menuSearch').value.trim().toLowerCase();
-    $$('.mitem').forEach((el) => { el.hidden = !!q && !ITEMS.get(el.dataset.id).name.toLowerCase().includes(q); });
+    $$('.mitem').forEach((el) => { const it = ITEMS.get(el.dataset.id); el.hidden = !!q && !(it ? it.name : el.dataset.binCat).toLowerCase().includes(q); });
     $$('.mcat').forEach((s) => { s.hidden = !!q && !$$('.mitem:not([hidden])', s).length; });
   }
 
@@ -1291,7 +1376,40 @@
     if (started) scrollTo({ top: 0, behavior: 'auto' });
   }
 
+  /* ---------- Quick actions (Ctrl/Cmd+K): jump to a tab, a product or a section ---------- */
+  function openPalette() {
+    const cmds = [
+      ...Object.entries(TABS).map(([k, v]) => ({ k: `Go to ${v[0]}`, run: () => showTab(k) })),
+      { k: 'Add a product', run: () => askAddProduct('') },
+      { k: 'Add a section', run: askAddCategory },
+      ...MENU.map((c) => ({ k: `Edit section ${c.name}`, hint: c.icon, run: () => { showTab('menu'); askEditCategory(c.id); } })),
+      ...[...ITEMS.values()].filter((i) => !i.gone).map((i) => ({ k: `Edit ${i.name}`, hint: `${i.icon} ${fmt(i.price)}`, run: () => { showTab('menu'); askItem(i.id); } }))
+    ];
+    let sel = 0;
+    let shown = [];
+    openModal(`<h3>Quick actions</h3><input class="pw-in" id="cpIn" role="combobox" aria-expanded="true" aria-controls="cpList" autocomplete="off" placeholder="Type a tab, product or section..."><div class="cp-list" id="cpList" role="listbox"></div>`);
+    const draw = () => {
+      const q = $('#cpIn').value.trim().toLowerCase();
+      shown = cmds.filter((c) => c.k.toLowerCase().includes(q)).slice(0, 8);
+      sel = Math.min(sel, Math.max(0, shown.length - 1));
+      $('#cpList').innerHTML = shown.map((c, i) => `<button role="option" aria-selected="${i === sel}" class="cp-item${i === sel ? ' on' : ''}" data-cp="${i}">${esc(c.k)}${c.hint ? `<small>${esc(c.hint)}</small>` : ''}</button>`).join('') || '<p class="muted">Nothing matches.</p>';
+    };
+    const go = (i) => { const c = shown[i]; if (c) { closeModal(); c.run(); } };
+    $('#cpIn').addEventListener('input', () => { sel = 0; draw(); });
+    $('#cpIn').addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, Math.min(shown.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1))); draw(); }
+      else if (e.key === 'Enter') { e.preventDefault(); go(sel); }
+    });
+    $('#cpList').addEventListener('click', (e) => { const b = e.target.closest('[data-cp]'); if (b) go(Number(b.dataset.cp)); });
+    draw();
+    $('#cpIn').focus();
+  }
+
   function wireUI() {
+    $('#cmdBtn').addEventListener('click', openPalette);
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && started && !$('#app').hidden) { e.preventDefault(); openPalette(); }
+    });
     $('#nav').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
     showTab(location.hash.slice(1));
     $('#histStatus').insertAdjacentHTML('beforeend', Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join(''));
@@ -1348,6 +1466,23 @@
       if (show) { menuCall({ op: 'hide', id: show.dataset.showItem, hide: false }, 'Item is back on the menu'); return; }
       const del = e.target.closest('[data-del-item]');
       if (del) { askDeleteItem(del.dataset.delItem); return; }
+      const ec = e.target.closest('[data-edit-cat]');
+      if (ec) { askEditCategory(ec.dataset.editCat); return; }
+      const step = e.target.closest('[data-cat-up],[data-cat-down]');
+      if (step) {
+        const id = step.dataset.catUp || step.dataset.catDown;
+        const ids = MENU.map((c) => c.id);
+        const i = ids.indexOf(id);
+        const j = i + (step.dataset.catUp ? -1 : 1);
+        if (i < 0 || j < 0 || j >= ids.length) return;
+        [ids[i], ids[j]] = [ids[j], ids[i]];
+        moveCat(id, ids);
+        return;
+      }
+      const rc = e.target.closest('[data-restore-cat]');
+      if (rc) { menuCall({ op: 'restorecat', id: rc.dataset.restoreCat }, 'Section restored'); return; }
+      const ri = e.target.closest('[data-restore-item]');
+      if (ri) { menuCall({ op: 'restore', id: ri.dataset.restoreItem }, 'Product restored'); return; }
       const b = e.target.closest('[data-cat-out]');
       if (!b) return;
       const ids = MENU.find((c) => c.id === b.dataset.catOut).items.map((i) => i.id);
@@ -1355,6 +1490,40 @@
       ids.forEach((id) => (allOut ? draft.oos.delete(id) : draft.oos.add(id)));
       renderConfig(); pushConfig();
     });
+    // Drag a section by its grip; the arrow buttons do the same for keyboards and touch screens.
+    let dragCat = '';
+    const dropMarks = () => $$('.mcat.drop-before,.mcat.drop-after,.mcat.dragging').forEach((s) => s.classList.remove('drop-before', 'drop-after', 'dragging'));
+    $('#menuAdmin').addEventListener('dragstart', (e) => {
+      const g = e.target.closest('[data-cat-grip]');
+      if (!g) return;
+      dragCat = g.dataset.catGrip;
+      const s = g.closest('.mcat');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragCat);
+      e.dataTransfer.setDragImage(s, 24, 24);
+      s.classList.add('dragging');
+    });
+    $('#menuAdmin').addEventListener('dragover', (e) => {
+      const s = dragCat && e.target.closest('.mcat[data-ord]');
+      if (!s) return;
+      e.preventDefault();
+      $$('.mcat.drop-before,.mcat.drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after'));
+      const r = s.getBoundingClientRect();
+      s.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+    });
+    $('#menuAdmin').addEventListener('drop', (e) => {
+      const s = dragCat && e.target.closest('.mcat[data-ord]');
+      if (!s) return;
+      e.preventDefault();
+      const id = dragCat;
+      const after = s.classList.contains('drop-after');
+      dropMarks(); dragCat = '';
+      if (s.dataset.cat === id) return;
+      const ids = MENU.map((c) => c.id).filter((x) => x !== id);
+      ids.splice(ids.indexOf(s.dataset.cat) + (after ? 1 : 0), 0, id);
+      moveCat(id, ids);
+    });
+    $('#menuAdmin').addEventListener('dragend', () => { dropMarks(); dragCat = ''; });
     $('#restockAll').addEventListener('click', () => { draft.oos.clear(); renderConfig(); pushConfig(); });
     $('#addProduct').addEventListener('click', () => askAddProduct(''));
     $('#addCategory').addEventListener('click', askAddCategory);
