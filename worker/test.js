@@ -233,6 +233,11 @@ async function pushTests({ worker, encryptPayload }) {
   assert.strictEqual([...kv.keys()].filter((k) => k.startsWith('a:')).length, 1);
 
   assert.strictEqual((await call('/push/sub', cust1, { role: 'shop', id: 'LH-AAAAAA', sub: custDev.sub })).status, 204);
+  assert.strictEqual(pushed.length, 1, 'the customer gets an order-received notification on first registration');
+  assert.deepStrictEqual(custDev.read(pushed[0]), { t: 'Order received', b: 'Order LH-AAAAAA is in. We will tell you when the status changes.', g: 'LH-AAAAAA', h: '#orders' });
+  assert.strictEqual((await call('/push/sub', cust1, { role: 'shop', id: 'LH-AAAAAA', sub: custDev.sub })).status, 204);
+  assert.strictEqual(pushed.length, 1, 'registering the same order again stays quiet');
+  pushed.length = 0;
   assert.strictEqual((await call('/push/sub', cust2, { role: 'shop', id: 'LH-AAAAAA', sub: custDev.sub })).status, 403, 'only the owner of an order can follow it');
   assert.strictEqual((await call('/push/sub', cust1, { role: 'shop', id: 'nope', sub: custDev.sub })).status, 400);
 

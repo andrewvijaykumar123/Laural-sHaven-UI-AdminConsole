@@ -335,7 +335,13 @@ async function handlePush(path, body, who, env) {
     if (!ID_RE[kind].test(String(body.id))) return [400, 'Invalid id'];
     // The caller can only read documents that are theirs, so a successful read proves it is their order or booking.
     if (!(await readDoc(`${kind === 'event' ? 'events' : 'orders'}/${body.id}`, who.token))) return [403, 'Not your order'];
+    const first = !(await env.PUSH.get(`o:${body.id}`));
     await env.PUSH.put(`o:${body.id}`, JSON.stringify({ sub, ts: Date.now() }), { expirationTtl: (kind === 'event' ? 120 : 3) * DAY });
+    // The customer's first confirmation that alerts work; later registrations of the same order stay quiet.
+    if (first) {
+      const word = kind === 'event' ? 'Booking' : 'Order';
+      await pushOne(env, sub, { t: kind === 'event' ? 'Booking requested' : 'Order received', b: `${word} ${body.id} is in. We will tell you when the status changes.`, g: body.id, h: kind === 'event' ? '#events' : '#orders' });
+    }
     return [204, null];
   }
 

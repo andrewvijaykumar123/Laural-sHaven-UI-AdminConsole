@@ -66,9 +66,7 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     // Lets the app show whether pushes reach this device at all.
     try { await (await caches.open('lh-meta')).put('push-last', new Response(JSON.stringify({ t: Date.now(), title: String(d.t || '') }))); } catch (err) { /* diagnostics only */ }
-    // The app shows it itself when it is open in front of the person (a test message is always shown, so it can be seen working).
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (d.g !== 'test' && wins.some((w) => w.visibilityState === 'visible' && w.focused)) { wins.forEach((w) => w.postMessage({ lhPush: { t: String(d.t || ''), b: String(d.b || '') } })); return; }
+    // Always shown, even with the app in front: an alert the person cannot see is the worst outcome.
     await self.registration.showNotification(String(d.t || "Laural's Haven").slice(0, 80), {
       body: String(d.b || '').slice(0, 200),
       tag: String(d.g || 'lh').slice(0, 60),
