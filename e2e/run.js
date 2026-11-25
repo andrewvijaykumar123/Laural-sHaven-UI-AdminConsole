@@ -1277,56 +1277,56 @@ async function until(fn, ms = 8000, step = 60) {
     await a.page.fill('#miName', 'House Chai');
     await a.page.fill('#miDesc', 'Spiced and sweet');
     await a.page.check('#miBest');
-    await a.page.selectOption('#miCat', 'sandwiches');
+    await a.page.selectOption('#miCat', 'refreshers');
     await a.page.click('#miSave');
     const ov = () => (menuDoc().ov || {})['lemon-tea'] || {};
-    check('a built-in product is saved as an override', !!(await until(() => ov().name === 'House Chai')) && ov().desc === 'Spiced and sweet' && ov().best === true && ov().cat === 'sandwiches', JSON.stringify(ov()));
-    check('the new name and description reach the storefront', !!(await until(async () => (await s1.page.textContent('#cat-sandwiches .card[data-id="lemon-tea"]')).includes('House Chai') && (await s1.page.textContent('#cat-sandwiches .card[data-id="lemon-tea"] .desc')).includes('Spiced and sweet'))));
-    check('it moved sections and joined the signatures', !!(await shopHas('#sigRow .sig[data-id="lemon-tea"]')) && (await s1.page.locator('#cat-tea-and-coffee .card[data-id="lemon-tea"]').count()) === 0);
+    check('a built-in product is saved as an override', !!(await until(() => ov().name === 'House Chai')) && ov().desc === 'Spiced and sweet' && ov().best === true && ov().cat === 'refreshers', JSON.stringify(ov()));
+    check('the new name and description reach the storefront', !!(await until(async () => (await s1.page.textContent('#cat-refreshers .card[data-id="lemon-tea"]')).includes('House Chai') && (await s1.page.textContent('#cat-refreshers .card[data-id="lemon-tea"] .desc')).includes('Spiced and sweet'))));
+    check('it moved sections and joined the signatures', !!(await shopHas('#sigRow .sig[data-id="lemon-tea"]')) && (await s1.page.locator('#cat-brewed-with-care .card[data-id="lemon-tea"]').count()) === 0);
     check('the price history is untouched', !(menuDoc().px || {})['lemon-tea']);
     await a.page.click('[data-edit-item="lemon-tea"]');
     await a.page.fill('#miName', 'Lemon Tea');
     await a.page.fill('#miDesc', '');
     await a.page.uncheck('#miBest');
-    await a.page.selectOption('#miCat', 'tea-and-coffee');
+    await a.page.selectOption('#miCat', 'brewed-with-care');
     await a.page.click('#miSave');
     check('editing it back leaves no override behind', !!(await until(() => !(menuDoc().ov || {})['lemon-tea'])), JSON.stringify(menuDoc().ov));
 
     // A built-in section: rename and re-tag.
-    await a.page.click('[data-edit-cat="maggie"]');
+    await a.page.click('[data-edit-cat="salads"]');
     await a.page.fill('#ecName', 'Noodle Bar');
     await a.page.fill('#ecTag', 'Slurp-worthy');
     await a.page.click('#ecSave');
-    check('a built-in section can be renamed', !!(await until(() => ((menuDoc().cov || {}).maggie || {}).name === 'Noodle Bar')) && menuDoc().cov.maggie.tagline === 'Slurp-worthy', JSON.stringify(menuDoc().cov));
-    check('the section name reaches the storefront heading and chip', !!(await until(async () => (await s1.page.textContent('#cat-maggie h2')).includes('Noodle Bar') && (await s1.page.textContent('.chip[data-cat="maggie"]')).includes('Noodle Bar'))));
+    check('a built-in section can be renamed', !!(await until(() => ((menuDoc().cov || {}).salads || {}).name === 'Noodle Bar')) && menuDoc().cov.salads.tagline === 'Slurp-worthy', JSON.stringify(menuDoc().cov));
+    check('the section name reaches the storefront heading and chip', !!(await until(async () => (await s1.page.textContent('#cat-salads h2')).includes('Noodle Bar') && (await s1.page.textContent('.chip[data-cat="salads"]')).includes('Noodle Bar'))));
 
     // Reorder sections with the arrows.
-    await a.page.click('[data-cat-down="tea-and-coffee"]');
-    check('moving a section down saves the new order', !!(await until(() => (menuDoc().ord || [])[0] === 'sandwiches' && menuDoc().ord[1] === 'tea-and-coffee')), JSON.stringify(menuDoc().ord));
-    check('the storefront follows the new order', !!(await until(async () => (await s1.page.getAttribute('#menuRoot .cat:first-child', 'id')) === 'cat-sandwiches')));
-    await a.page.click('[data-cat-up="tea-and-coffee"]');
-    check('moving it back up restores the order', !!(await until(async () => (await s1.page.getAttribute('#menuRoot .cat:first-child', 'id')) === 'cat-tea-and-coffee')));
+    await a.page.click('[data-cat-down="brewed-with-care"]');
+    check('moving a section down saves the new order', !!(await until(() => (menuDoc().ord || [])[0] === 'refreshers' && menuDoc().ord[1] === 'brewed-with-care')), JSON.stringify(menuDoc().ord));
+    check('the storefront follows the new order', !!(await until(async () => (await s1.page.getAttribute('#menuRoot .cat:first-child', 'id')) === 'cat-refreshers')));
+    await a.page.click('[data-cat-up="brewed-with-care"]');
+    check('moving it back up restores the order', !!(await until(async () => (await s1.page.getAttribute('#menuRoot .cat:first-child', 'id')) === 'cat-brewed-with-care')));
 
     // Delete a section and move its products elsewhere.
-    await a.page.click('[data-edit-cat="omelettes"]');
+    await a.page.click('[data-edit-cat="loaded-fries"]');
     await a.page.click('#ecDel');
-    await a.page.selectOption('#dcTo', 'maggie');
+    await a.page.selectOption('#dcTo', 'salads');
     await a.page.click('#dcYes');
-    check('the deleted section is tombstoned', !!(await until(() => (menuDoc().dcat || []).includes('omelettes'))), JSON.stringify(menuDoc().dcat));
-    check('its products moved to the chosen section', !!(await shopHas('#cat-maggie .card[data-id="plain-omelette"]')) && (await s1.page.locator('#cat-omelettes:not([hidden])').count()) === 0);
-    check('the section sits in Recently deleted', !!(await until(() => a.page.locator('[data-restore-cat="omelettes"]').count())));
-    await a.page.click('[data-restore-cat="omelettes"]');
-    check('a deleted section can be restored', !!(await until(() => !(menuDoc().dcat || []).includes('omelettes'))) && (await a.page.locator('[data-restore-cat="omelettes"]').count()) === 0);
+    check('the deleted section is tombstoned', !!(await until(() => (menuDoc().dcat || []).includes('loaded-fries'))), JSON.stringify(menuDoc().dcat));
+    check('its products moved to the chosen section', !!(await shopHas('#cat-salads .card[data-id="chicken-loaded-fries"]')) && (await s1.page.locator('#cat-loaded-fries:not([hidden])').count()) === 0);
+    check('the section sits in Recently deleted', !!(await until(() => a.page.locator('[data-restore-cat="loaded-fries"]').count())));
+    await a.page.click('[data-restore-cat="loaded-fries"]');
+    check('a deleted section can be restored', !!(await until(() => !(menuDoc().dcat || []).includes('loaded-fries'))) && (await a.page.locator('[data-restore-cat="loaded-fries"]').count()) === 0);
 
     // Delete a section together with its products, then restore both.
-    await a.page.click('[data-edit-cat="momo-s"]');
+    await a.page.click('[data-edit-cat="momos"]');
     await a.page.click('#ecDel');
     await a.page.check('input[name="dcMode"][value="del"]');
     await a.page.click('#dcYes');
-    check('products leave the storefront with their section', !!(await shopGone('.card[data-id="veg-momos"]')) && (menuDoc().dcat || []).includes('momo-s'));
+    check('products leave the storefront with their section', !!(await shopGone('.card[data-id="veg-momos"]')) && (menuDoc().dcat || []).includes('momos'));
     check('the products are not individually deleted', !(menuDoc().del || []).includes('veg-momos'));
-    await a.page.click('[data-restore-cat="momo-s"]');
-    check('restoring the section brings its products back', !!(await shopHas('#cat-momo-s .card[data-id="veg-momos"]')));
+    await a.page.click('[data-restore-cat="momos"]');
+    check('restoring the section brings its products back', !!(await shopHas('#cat-momos .card[data-id="veg-momos"]')));
 
     // Delete one product and restore it from the bin.
     await a.page.click(`[data-edit-item="${I(2)}"]`);

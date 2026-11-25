@@ -7,7 +7,7 @@ const lib = require('./lib');
 
 const LH = lib.loadCore();
 const T0 = Date.parse('2026-10-28T10:00:00Z'); // 15:30 IST
-const doc = (id, extra = {}) => ({ id, n: 'Anita <b>', p: '9876543210', em: 'anita@example.com', it: ['masala-tea:2', 'veg-momos:1'], total: 119, pay: 'upi', svc: 'dine', tbl: '4', nt: '', ...extra });
+const doc = (id, extra = {}) => ({ id, n: 'Anita <b>', p: '9876543210', em: 'anita@example.com', it: ['tea:2', 'veg-momos:1'], total: 119, pay: 'upi', svc: 'dine', tbl: '4', nt: '', ...extra });
 
 function fake(orders, statuses = {}, mails = {}) {
   return {
@@ -24,8 +24,8 @@ const send = async (m) => { outbox.push(m); };
 
 (async () => {
   // validation: email accepted, bad email dropped
-  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'A@B.CO', it: [['masala-tea', 1]] }).em, 'a@b.co');
-  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'nope', it: [['masala-tea', 1]] }).em, '');
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'A@B.CO', it: [['tea', 1]] }).em, 'a@b.co');
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', em: 'nope', it: [['tea', 1]] }).em, '');
 
   // event bookings: Rs 1000/hour + Rs 500 cleaning + optional Rs 500 decoration
   assert.strictEqual(LH.eventQuote(3, true).total, 4000);
@@ -51,20 +51,20 @@ const send = async (m) => { outbox.push(m); };
 
   // menu changes: an order keeps the price it was placed at; hidden and added items work
   const T1 = Date.parse('2026-10-20T10:00:00Z'); const T2 = Date.parse('2026-10-25T10:00:00Z');
-  const base = LH.ITEMS.get('masala-tea').price;
-  LH.applyMenu({ ts: T2, px: { 'masala-tea': [`0:${base}`, `${T2}:99`], 'rasmalai-cup': [`${T2}:120`] }, hid: ['veg-momos'], cats: [{ id: 'desserts', name: 'Desserts', icon: '🍰', hue: 300, tagline: 'Sweet' }], items: [{ id: 'rasmalai-cup', name: 'Rasmalai Cup', cat: 'desserts', diet: 'v', icon: '' }] });
-  assert.strictEqual(LH.priceAt('masala-tea', T1), base, 'before the change');
-  assert.strictEqual(LH.priceAt('masala-tea', T2 + 1), 99, 'after the change');
-  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T1, it: [['masala-tea', 2]] }).total, base * 2);
-  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T2 + 5, it: [['masala-tea', 2], ['rasmalai-cup', 1]] }).total, 198 + 120);
+  const base = LH.ITEMS.get('tea').price;
+  LH.applyMenu({ v: 2, ts: T2, px: { 'tea': [`0:${base}`, `${T2}:99`], 'rasmalai-cup': [`${T2}:120`] }, hid: ['veg-momos'], cats: [{ id: 'desserts', name: 'Desserts', icon: '🍰', hue: 300, tagline: 'Sweet' }], items: [{ id: 'rasmalai-cup', name: 'Rasmalai Cup', cat: 'desserts', diet: 'v', icon: '' }] });
+  assert.strictEqual(LH.priceAt('tea', T1), base, 'before the change');
+  assert.strictEqual(LH.priceAt('tea', T2 + 1), 99, 'after the change');
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T1, it: [['tea', 2]] }).total, base * 2);
+  assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T2 + 5, it: [['tea', 2], ['rasmalai-cup', 1]] }).total, 198 + 120);
   assert.ok(LH.ITEMS.get('veg-momos').hide && !LH.MENU.some((c) => c.items.some((i) => i.id === 'veg-momos')) && LH.HIDDEN.length === 1, 'hidden items stay readable but are off the menu');
   assert.strictEqual(LH.MENU.find((c) => c.id === 'desserts').items[0].price, 120);
-  LH.applyMenu({ px: { 'masala-tea': ['0:0', 'x:y', '5:-3'], 'ghost': ['0:50'] }, items: [{ id: 'masala-tea', name: 'dup', cat: 'desserts' }, { id: 'no-cat', name: 'x', cat: 'nope' }], hid: ['ghost'] });
-  assert.strictEqual(LH.ITEMS.get('masala-tea').price, base, 'invalid price history is ignored');
+  LH.applyMenu({ v: 2, px: { 'tea': ['0:0', 'x:y', '5:-3'], 'ghost': ['0:50'] }, items: [{ id: 'tea', name: 'dup', cat: 'desserts' }, { id: 'no-cat', name: 'x', cat: 'nope' }], hid: ['ghost'] });
+  assert.strictEqual(LH.ITEMS.get('tea').price, base, 'invalid price history is ignored');
   assert.ok(!LH.ITEMS.has('ghost') && !LH.ITEMS.has('no-cat'), 'unknown or invalid entries are ignored');
-  LH.applyMenu({ ts: 1, px: { 'evil-item': ['1:50'] }, cats: [{ id: 'evil', name: 'Evil', icon: '<img src=x onerror=1>"\'`=&🍰', hue: 10, tagline: 'x' }], items: [{ id: 'evil-item', name: 'E', cat: 'evil', diet: 'v', icon: '"onmouseover="x' }] });
+  LH.applyMenu({ v: 2, ts: 1, px: { 'evil-item': ['1:50'] }, cats: [{ id: 'evil', name: 'Evil', icon: '<img src=x onerror=1>"\'`=&🍰', hue: 10, tagline: 'x' }], items: [{ id: 'evil-item', name: 'E', cat: 'evil', diet: 'v', icon: '"onmouseover="x' }] });
   assert.ok(!/[<>"'`=&]/.test(LH.MENU.find((c) => c.id === 'evil').icon + LH.ITEMS.get('evil-item').icon), 'menu icons cannot carry markup or attribute breakers');
-  LH.applyMenu({ ts: 3, del: ['veg-momos', 'nope'], hid: ['veg-momos'] });
+  LH.applyMenu({ v: 2, ts: 3, del: ['veg-momos', 'nope'], hid: ['veg-momos'] });
   assert.ok(LH.ITEMS.get('veg-momos').gone && !LH.MENU.some((c) => c.items.some((i) => i.id === 'veg-momos')) && LH.HIDDEN.length === 0, 'deleted items stay readable for old orders but are on neither list');
   assert.strictEqual(LH.validateOrder({ id: 'LH-ABC234', n: 'A', p: '9876543210', ts: T1, it: [['veg-momos', 1]] }).it.length, 1, 'an old order with a deleted item still validates');
   LH.applyMenu(null);
@@ -140,17 +140,17 @@ const send = async (m) => { outbox.push(m); };
   assert.strictEqual(lib.targetDay(Date.parse('2026-10-28T19:10:00Z')), '2026-10-28'); // 00:40 IST next day: delayed run => still the day just ended
   const day = '2026-10-28'; const { start } = lib.dayBounds(day);
   const rep = [
-    { id: 'LH-R00001', data: doc('LH-R00001', { it: ['masala-tea:2'], total: 50 }), ts: start + 3600000 * 9 },
-    { id: 'LH-R00002', data: doc('LH-R00002', { it: ['veg-momos:3'], total: 207, pay: 'counter', svc: 'take', p: '9000000001', em: undefined }), ts: start + 3600000 * 13 },
-    { id: 'LH-R00003', data: doc('LH-R00003', { it: ['mango:1'], total: 149 }), ts: start + 3600000 * 13 },
-    { id: 'LH-R00004', data: doc('LH-R00004', { it: ['mango:1'], total: 149, p: '9000000002' }), ts: start + 3600000 * 20 }
+    { id: 'LH-R00001', data: doc('LH-R00001', { it: ['tea:2'], total: 50 }), ts: start + 3600000 * 9 },
+    { id: 'LH-R00002', data: doc('LH-R00002', { it: ['veg-momos:3'], total: 267, pay: 'counter', svc: 'take', p: '9000000001', em: undefined }), ts: start + 3600000 * 13 },
+    { id: 'LH-R00003', data: doc('LH-R00003', { it: ['mango:1'], total: 159 }), ts: start + 3600000 * 13 },
+    { id: 'LH-R00004', data: doc('LH-R00004', { it: ['mango:1'], total: 159, p: '9000000002' }), ts: start + 3600000 * 20 }
   ];
   delete rep[1].data.em;
   const st = { 'LH-R00001': { s: 'completed', v: true }, 'LH-R00002': { s: 'completed' }, 'LH-R00003': { s: 'rejected', r: 'Kitchen is too busy' }, 'LH-R00004': { s: 'cooking' } };
   outbox.length = 0;
   const stats = await lib.dailyReport({ store: fake(rep, st), send, LH, to: 'owner@example.com', day, log: () => {} });
   assert.strictEqual(stats.placed, 4); assert.strictEqual(stats.rejected, 1); assert.strictEqual(stats.completed, 2);
-  assert.strictEqual(stats.sales, 50 + 207 + 149); assert.strictEqual(stats.validCount, 3);
+  assert.strictEqual(stats.sales, 50 + 267 + 159); assert.strictEqual(stats.validCount, 3);
   assert.strictEqual(stats.upiUnverified.length, 1); assert.strictEqual(stats.open.length, 1);
   assert.strictEqual(stats.hours[9], 1); assert.strictEqual(stats.hours[13], 1);
   assert.strictEqual(outbox[0].to, 'owner@example.com'); assert.ok(outbox[0].attachments[0].content.includes('LH-R00001'));
@@ -201,7 +201,7 @@ const send = async (m) => { outbox.push(m); };
   const at = (km) => dd('LH-DELIV6', { lat: 12.847503 + km / 110.57, lng: 80.196458 });
   const o7 = lib.toOrder(LH, 'LH-DELIV6', at(7.5), T0);
   assert.ok(o7 && o7.fee >= 36 && o7.fee <= 39, 'fee added for 7.5 km');
-  const v7 = LH.validateOrder({ ...at(7.5), ts: T0, it: [['masala-tea', 2], ['veg-momos', 1]] }), v0 = LH.validateOrder({ ...dd('LH-DELIV6'), ts: T0, it: [['masala-tea', 2], ['veg-momos', 1]] });
+  const v7 = LH.validateOrder({ ...at(7.5), ts: T0, it: [['tea', 2], ['veg-momos', 1]] }), v0 = LH.validateOrder({ ...dd('LH-DELIV6'), ts: T0, it: [['tea', 2], ['veg-momos', 1]] });
   assert.strictEqual(v7.total - v0.total, v7.fee, 'fee is added to the total');
   assert.match(lib.confirmEmail(LH, o7).text, new RegExp(`Delivery  ₹${o7.fee}`));
   assert.ok(lib.toOrder(LH, 'LH-DELIV7', at(14.5), T0), '14.5 km accepted');

@@ -4,9 +4,43 @@
 
   const UPI = { phone: '9962419353' };
 
-  /* ---------- Menu (source: Laural's Haven - Complete Cafe Menu.pdf, 85 items) ---------- */
-  // diet: v = veg, e = egg, n = non-veg
+  /* ---------- Menu (source: Order Page/Laural's Haven Ordering Page.png, 50 items) ---------- */
+  // diet: v = veg, e = egg, n = non-veg. A fourth value pins the id of a product that already existed, so its price history and old orders carry over.
   const RAW_MENU = [
+    ['Brewed With Care', '☕', 28, 'Tea and coffee, brewed fresh', [
+      ['Chai', 25, 'v', 'tea'], ['Ginger Tea', 30, 'v'], ['Lemon Tea', 25, 'v'], ['Black Coffee', 25, 'v'], ['Filter Coffee', 35, 'v']]],
+    ['Refreshers', '🍹', 150, 'Cool, fresh and fruity', [
+      ['Lemon', 59, 'v'], ['Grape', 69, 'v'], ['Guava', 69, 'v'], ['Virgin Mojito', 79, 'v']]],
+    ['Milkshake', '🥛', 320, 'Thick, creamy, indulgent', [
+      ['Mango', 159, 'v'], ['Tender Coconut', 149, 'v'], ['Avocado', 169, 'v'], ['Chocolate Shake', 169, 'v']]],
+    ['Crispy Bites', '🍟', 12, 'Golden, crunchy, shareable', [
+      ['French Fries', 99, 'v'], ['Peri Peri Fries', 109, 'v'], ['Chicken Popcorn', 119, 'n'], ['Paneer Popcorn', 119, 'v']]],
+    ["Haven's Special", '🍫', 25, 'Our most-loved sips', [
+      ['Hot Chocolate', 169, 'v'], ['Protein Shake (No Sugar)', 169, 'v', 'protein-shake'], ['Cold Coffee', 159, 'v']]],
+    ['Salads', '🥗', 120, 'Fresh, crisp and protein-rich', [
+      ['Chicken Salad', 249, 'n'], ['Veg Protein Salad', 249, 'v']]],
+    ['Burger', '🍔', 20, 'Stacked, saucy, unforgettable', [
+      ['Paneer Royale Burger', 199, 'v'], ['Mystic Mushroom Burger', 199, 'v'], ['Hot & Crispy Burger', 239, 'n'],
+      ['The Aurora Mint Burger (Chicken)', 249, 'n', 'the-aurora-mint-burger'], ['The Aurora Mint Burger (Beef)', 279, 'n', 'thr-aurora-mint-beef-burger'],
+      ['The Apollo Tikka Burger (Chicken)', 259, 'n', 'the-apollo-tikka-burger-ufo'], ['The Apollo Tikka Burger (Beef)', 289, 'n', 'the-apollo-tikka-beef-burger'],
+      ['The Artemis Tikka Burger (Chicken)', 249, 'n', 'the-artemis-tikka-burger-ufo'], ['The Artemis Tikka Burger (Beef)', 279, 'n', 'the-artemis-malai-beef-burger']]],
+    ['Wraps', '🌯', 5, 'Rolled, wrapped, out of this world', [
+      ['Paneer Peri Wrap', 169, 'v'], ['Mushroom Medley Wrap', 169, 'v'], ['Crispy Chicken Wrap', 179, 'n'],
+      ['Mint Magic Wrap (Chicken)', 189, 'n', 'mint-magic-wrap'], ['Mint Magic Wrap (Beef)', 210, 'n', 'mint-magic-beef-wrap'],
+      ['Tandoori Tikka Wrap (Chicken)', 189, 'n', 'tandoori-tikka-wrap'], ['Tandoori Tikka Wrap (Beef)', 210, 'n', 'tandoori-beef-wrap'],
+      ['Malai Tikka Wrap (Chicken)', 189, 'n', 'malai-tikka-wrap'], ['Malai Tikka Wrap (Beef)', 210, 'n', 'malai-beef-wrap']]],
+    ['Momos', '🥟', 350, 'Steamed pockets of joy', [
+      ['Veg Momos', 89, 'v'], ['Chicken Momos', 99, 'n'], ['Beef Momos', 119, 'n']]],
+    ['Loaded Fries', '🧀', 45, 'Piled high, smothered in cheese', [
+      ['Chicken Loaded Fries', 199, 'n'], ['Beef Loaded Fries', 229, 'n']]],
+    ['Signature Dish', '🔥', 8, 'From our kitchen', [
+      ['Dragon Fire Chicken', 279, 'n'], ['Dragon Fire Paneer', 269, 'v'], ['Cheesy Chicken', 259, 'n'],
+      ['Kiddo Burger (Chicken, 8 pc)', 289, 'n'], ['Kiddo Burger (Beef, 6 pc)', 289, 'n']]]
+  ];
+
+  /* The previous built-in menu (85 items). Products it no longer sells stay known (retired) so old orders still read and price correctly,
+     and the prices of products that were kept seed their price history when an older config/menu is migrated. */
+  const LEGACY_MENU = [
     ['Tea & Coffee', '☕', 28, 'Hot classics, brewed fresh', [
       ['Masala Tea', 25, 'v'], ['Lemon Tea', 25, 'v'], ['Black Brew', 25, 'v'], ['Ginger Tea', 30, 'v'], ['Filter Coffee', 30, 'v']]],
     ['Sandwiches', '🥪', 38, 'Toasted, stuffed, never boring', [
@@ -50,13 +84,13 @@
       ['Non Veg Salad + Red Banana Shake', 329, 'n'], ['Veg Salad + Red Banana Shake', 299, 'v']]]
   ];
 
-  const BESTSELLERS = new Set(['haven-fuel', 'mocha-mist', 'masala-tea', 'paneer-sandwich', 'chicken-momos', 'french-fries', 'tandoori-blaze-tikka', 'chicken-burger', 'mango']);
+  const BESTSELLERS = new Set(['dragon-fire-chicken', 'dragon-fire-paneer', 'cheesy-chicken', 'kiddo-burger-chicken-8-pc', 'kiddo-burger-beef-6-pc']);
   const ICON_RULES = [
-    [/coffee|mocha|brew/i, '☕'], [/tea/i, '🍵'], [/sandwich/i, '🥪'], [/maggie/i, '🍜'], [/omelette/i, '🍳'], [/momo/i, '🥟'],
+    [/coffee|mocha|brew/i, '☕'], [/tea|chai/i, '🍵'], [/mojito/i, '🍹'], [/dragon fire/i, '🔥'], [/cheesy/i, '🧀'], [/popcorn/i, '🍿'], [/sandwich/i, '🥪'], [/maggie/i, '🍜'], [/omelette/i, '🍳'], [/momo/i, '🥟'],
     [/burger/i, '🍔'], [/wrap/i, '🌯'], [/loaded|fries/i, '🍟'], [/pops/i, '🍗'], [/watermelon/i, '🍉'], [/musk/i, '🍈'],
     [/lemon|mint lime/i, '🍋'], [/guava/i, '🍐'], [/sapodilla/i, '🥔'], [/grape/i, '🍇'], [/coconut/i, '🥥'], [/avocado/i, '🥑'],
     [/jackfruit/i, '🍈'], [/strawberry/i, '🍓'], [/custard/i, '🍏'], [/mango/i, '🥭'], [/fig/i, '🫐'], [/chocolate|milo/i, '🍫'],
-    [/fuel/i, '🥤'], [/salad/i, '🥗'], [/tikka|chicken/i, '🍢'], [/paneer|mushroom/i, '🧀']
+    [/fuel|shake/i, '🥤'], [/salad/i, '🥗'], [/tikka|chicken/i, '🍢'], [/paneer|mushroom/i, '🧀']
   ];
   const slug = (s) => s.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const iconFor = (name, fallback) => {
@@ -66,7 +100,10 @@
 
   const BASE = RAW_MENU.map(([name, icon, hue, tagline, items]) => {
     const cat = { id: slug(name), name, icon, hue, tagline, items: [] };
-    items.forEach(([iname, price, diet]) => cat.items.push({ id: slug(iname), name: iname, price, diet, cat: cat.id, icon: iconFor(iname, icon), best: BESTSELLERS.has(slug(iname)) }));
+    items.forEach(([iname, price, diet, pinned]) => {
+      const id = pinned || slug(iname);
+      cat.items.push({ id, name: iname, price, diet, cat: cat.id, icon: iconFor(iname, icon), best: BESTSELLERS.has(id) });
+    });
     return cat;
   });
   {
@@ -74,6 +111,15 @@
     BASE.forEach((c) => c.items.forEach((i) => { if (seen.has(i.id)) throw new Error(`Duplicate menu id ${i.id}`); seen.add(i.id); }));
   }
   const BASE_ITEMS = new Map(BASE.flatMap((c) => c.items).map((i) => [i.id, i]));
+
+  // Every product the cafe has ever sold from the built-in menu (plus two created in the live editor), with the price it last had there.
+  const LEGACY = new Map(LEGACY_MENU.flatMap(([, icon, , , items]) => items.map(([name, price, diet]) => [slug(name), { id: slug(name), name, price, diet, icon: iconFor(name, icon) }])));
+  [['chocolate-shake-2', 'Chocolate Shake', 169], ['test', 'Test', 1]].forEach(([id, name, price]) => LEGACY.set(id, { id, name, price, diet: 'v', icon: iconFor(name, '🍽️') }));
+  const RETIRED = new Map([...LEGACY].filter(([id]) => !BASE_ITEMS.has(id)));
+  // config/menu docs written before this version carry the old layout; they are reset to the built-in menu and only their price history is kept.
+  const MENU_V = 2;
+  // Just after the owner's last edit of the old layout, so older orders keep the price they were placed at.
+  const MENU_EPOCH = 1795560000000;
 
   /* The owner's changes live in config/menu: price history (px: id -> ["ts:price", ...]), hidden items (hid), extra categories (cats)
      extra products (items) and deleted items (del). Built-in products and sections are edited through overrides (ov, cov); deleted sections
@@ -85,13 +131,15 @@
   const GONE_CATS = [];
   const MENU_MAX = { items: 300, cats: 24, catDocs: 60, hist: 12, price: 9999 };
   const DIET_IDS = ['v', 'e', 'n'];
-  let menuDoc = { ts: 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
+  let menuDoc = { v: MENU_V, ts: 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
   const menuId = (s) => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(s);
   const okPrice = (p) => Number.isInteger(p) && p >= 1 && p <= MENU_MAX.price;
 
   function cleanMenu(d) {
-    const o = { ts: Number(d && d.ts) || 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
+    const o = { v: MENU_V, ts: Number(d && d.ts) || 0, px: {}, hid: [], del: [], cats: [], items: [], ov: {}, cov: {}, dcat: [], ord: [] };
     if (!d || typeof d !== 'object') return o;
+    const legacy = d.v !== MENU_V;
+    if (legacy) d = { ts: d.ts, px: d.px };
     const catIds = new Set(BASE.map((c) => c.id));
     const plain = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
     (Array.isArray(d.cats) ? d.cats : []).slice(0, MENU_MAX.catDocs).forEach((c) => {
@@ -100,13 +148,22 @@
       catIds.add(c.id);
       o.cats.push({ id: c.id, name, icon: cleanIcon(c.icon) || '🍽️', hue: (((Math.floor(Number(c.hue)) || 0) % 360) + 360) % 360, tagline: clean(c.tagline, 60) });
     });
-    const itemIds = new Set(BASE_ITEMS.keys());
+    const itemIds = new Set([...BASE_ITEMS.keys(), ...RETIRED.keys()]);
     const px = {};
     Object.keys(d.px && typeof d.px === 'object' ? d.px : {}).slice(0, 500).forEach((id) => {
       const h = (Array.isArray(d.px[id]) ? d.px[id] : []).map((s) => { const [t, p] = String(s).split(':').map(Number); return [t, p]; })
         .filter(([t, p]) => Number.isFinite(t) && t >= 0 && okPrice(p)).sort((a, b) => a[0] - b[0]).slice(-MENU_MAX.hist);
       if (h.length) px[id] = h;
     });
+    if (legacy) {
+      BASE_ITEMS.forEach((it, id) => {
+        const old = LEGACY.get(id);
+        const h = px[id] || (old ? [[0, old.price]] : []);
+        if (!h.length || h[h.length - 1][1] === it.price) return;
+        h.push([MENU_EPOCH, it.price]);
+        px[id] = h.slice(-MENU_MAX.hist);
+      });
+    }
     (Array.isArray(d.items) ? d.items : []).slice(0, MENU_MAX.items).forEach((i) => {
       const name = i && clean(i.name, 50);
       if (!name || !menuId(i.id) || itemIds.has(i.id) || !catIds.has(i.cat) || !px[i.id]) return;
@@ -171,6 +228,10 @@
     cats.forEach((c) => { c.all = []; });
     BASE.forEach((c) => c.items.forEach((i) => put({ ...i, ...menuDoc.ov[i.id] })));
     menuDoc.items.forEach((i) => put({ ...i, price: 0, best: i.best === true, custom: true, icon: i.icon || iconFor(i.name, byCat.get(i.cat).icon) }));
+    RETIRED.forEach((it, id) => {
+      const h = menuDoc.px[id];
+      ITEMS.set(id, { ...it, cat: '', best: false, price: h ? h[h.length - 1][1] : it.price, gone: true, hide: true, retired: true });
+    });
     const rank = new Map(menuDoc.ord.map((id, n) => [id, n]));
     const at = (c) => (rank.has(c.id) ? rank.get(c.id) : menuDoc.ord.length);
     cats.map((c, n) => [c, n]).sort((a, b) => at(a[0]) - at(b[0]) || a[1] - b[1]).forEach(([c]) => (dcat.has(c.id) ? GONE_CATS : MENU).push(c));
@@ -757,7 +818,7 @@
 
   /* ---------- Menu editing (admin): every change rewrites config/menu whole ---------- */
   const wireMenu = (m) => ({
-    cats: m.cats, items: m.items, hid: m.hid, del: m.del, ov: m.ov, cov: m.cov, dcat: m.dcat, ord: m.ord,
+    v: MENU_V, cats: m.cats, items: m.items, hid: m.hid, del: m.del, ov: m.ov, cov: m.cov, dcat: m.dcat, ord: m.ord,
     px: Object.fromEntries(Object.entries(m.px).map(([id, h]) => [id, h.map(([t, p]) => `${t}:${p}`)]))
   });
   const uniqueId = (base, taken) => {
@@ -774,7 +835,7 @@
     if (o.op === 'price') {
       const it = ITEMS.get(o.id);
       const price = Math.floor(Number(o.price));
-      if (!it || !okPrice(price)) throw new Error('Enter a price between 1 and 9999');
+      if (!it || it.retired || !okPrice(price)) throw new Error('Enter a price between 1 and 9999');
       if (price === it.price) return null;
       const h = m.px[o.id] || (BASE_ITEMS.has(o.id) ? [[0, BASE_ITEMS.get(o.id).price]] : []);
       h.push([Math.max(ts, ((h[h.length - 1] || [0])[0]) + 1), price]);
@@ -799,7 +860,7 @@
       const id = uniqueId(name, new Set([...MENU, ...GONE_CATS].map((c) => c.id)));
       m.cats.push({ id, name, icon: cleanIcon(o.icon) || '🍽️', hue: (200 + m.cats.length * 47) % 360, tagline: clean(o.tagline, 60) });
     } else if (o.op === 'hide') {
-      if (!ITEMS.has(o.id)) throw new Error('Unknown item');
+      if (!ITEMS.has(o.id) || ITEMS.get(o.id).retired) throw new Error('Unknown item');
       const s = new Set(m.hid);
       if (o.hide) s.add(o.id); else s.delete(o.id);
       m.hid = [...s];

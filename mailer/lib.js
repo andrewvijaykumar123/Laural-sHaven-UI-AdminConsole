@@ -105,7 +105,7 @@ function buildReport(LH, rows) {
   valid.forEach(({ o }) => o.it.forEach(([id, q]) => {
     const it = LH.ITEMS.get(id);
     qty[it.name] = (qty[it.name] || 0) + q; rev[it.name] = (rev[it.name] || 0) + LH.unit(o, id) * q;
-    const c = LH.MENU.find((m) => m.id === it.cat).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q;
+    const c = (LH.MENU.find((m) => m.id === it.cat) || { name: 'Retired items' }).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q;
   }));
   r.top = Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, q]) => [n, q, rev[n]]);
   r.cats = Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8);

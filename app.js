@@ -941,7 +941,7 @@
     $('#hourChart').innerHTML = barChart(hours);
 
     const qty = {}; const cat = {};
-    valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = MENU.find((x) => x.id === it.cat).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q; }));
+    valid.forEach((o) => o.it.forEach(([id, q]) => { const it = ITEMS.get(id); qty[it.name] = (qty[it.name] || 0) + q; const c = (MENU.find((x) => x.id === it.cat) || { name: 'Retired items' }).name; cat[c] = (cat[c] || 0) + LH.unit(o, id) * q; }));
     $('#topItems').innerHTML = rank(Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 8), (v) => `${v}×`);
     $('#catSplit').innerHTML = rank(Object.entries(cat).sort((a, b) => b[1] - a[1]).slice(0, 8), fmt);
     const mix = {}; all.forEach((o) => { const l = LH.statusLabel(o, statusOf(o.id), (meta[o.id] || {}).r); mix[l] = (mix[l] || 0) + 1; });
