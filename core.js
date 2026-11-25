@@ -1039,6 +1039,7 @@
 
   /* ---------- Streams ---------- */
   const streams = {};
+  const wakers = [];
   let menuResolve;
   const menuReady = new Promise((r) => { menuResolve = r; });
   function connect(name) {
@@ -1051,7 +1052,8 @@
       if (relayState[name] !== all) { relayState[name] = all; emitRelay(); }
     };
     const MD = { includeMetadataChanges: true };
-    let delay = 3000, timer = null, offs = [];
+    let delay = 1000, timer = null, offs = [];
+    const reattach = () => { timer = null; offs.splice(0).forEach((f) => { try { f(); } catch (x) { /* already closed */ } }); attach(); };
     // Listener errors (rules, network, sign-in not ready) are retried with backoff instead of staying down until a reload.
     const retry = (k, e) => {
       mark(k, false);
@@ -1059,10 +1061,12 @@
       if (name === 'feedback') emit('fbsync', { ok: false, code: e && e.code ? e.code : 'error' });
       if (name === 'events') emit('evsync', { ok: false, code: e && e.code ? e.code : 'error' });
       if (timer) return;
-      timer = setTimeout(() => { timer = null; offs.splice(0).forEach((f) => { try { f(); } catch (x) { /* already closed */ } }); attach(); }, delay);
-      delay = Math.min(delay * 2, 60000);
+      timer = setTimeout(reattach, delay);
+      delay = Math.min(delay * 2, 30000);
     };
-    const synced = (k, snap) => { const ok = !snap.metadata.fromCache; mark(k, ok); if (ok) delay = 3000; };
+    // A waiting retry is not left to its backoff once the device is back.
+    wakers.push(() => { if (timer) { clearTimeout(timer); delay = 1000; reattach(); } });
+    const synced = (k, snap) => { const ok = !snap.metadata.fromCache; mark(k, ok); if (ok) delay = 1000; };
     async function attach() {
       try {
         const FB = window.LH_FB;
@@ -1158,14 +1162,30 @@
   const watch = makeWatcher('status', validId, emitStatus);
   const watchEv = makeWatcher('evstatus', validEventId, emitEvStatus);
 
-  async function flush() {
-    try {
-      const FB = window.LH_FB;
-      const { db } = firebase();
-      await FB.disableNetwork(db);
-      await FB.enableNetwork(db);
-    } catch (e) { /* not connected yet */ }
-    emitRelay();
+  let flushing = null;
+  function flush() {
+    if (flushing) return flushing;
+    flushing = (async () => {
+      try {
+        const FB = window.LH_FB;
+        const { db } = firebase();
+        await FB.disableNetwork(db);
+        await FB.enableNetwork(db);
+      } catch (e) { /* not connected yet */ }
+      wakers.forEach((w) => w());
+      emitRelay();
+    })().finally(() => { flushing = null; });
+    return flushing;
+  }
+
+  /* A phone that slept or a tab left in the background can hold a dead socket for a long time before the SDK notices;
+     reconnecting as soon as the app is looked at again makes missed orders and status changes arrive at once. */
+  const WAKE_AFTER = 10000;
+  let hiddenAt = 0;
+  function onVisibility() {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt >= WAKE_AFTER && Object.keys(streams).length) flush();
+    hiddenAt = 0;
   }
 
   function init(app) {
@@ -1179,6 +1199,8 @@
     const ec = saved('evcfg');
     if (ec) applyEvDoc(ec);
     window.addEventListener('online', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', (e) => { if (e.persisted && Object.keys(streams).length) flush(); });
   }
 
   window.LH = {

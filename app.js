@@ -456,13 +456,14 @@
   async function togglePay(id) {
     try { await LH.publishAdmin({ k: 'pv', id, v: !(meta[id] && meta[id].v) }); } catch (e) { toast('Could not update payment.', 'bad'); }
   }
-  function pushConfig() {
+  // Switches publish almost at once (a short window still merges quick taps into one write); typing waits for a pause.
+  function pushConfig(wait = 120) {
     clearTimeout(draftTimer);
     draftTimer = setTimeout(async () => {
       draftTimer = null;
       try { await LH.publishAdmin({ k: 'cfg', open: draft.open, oos: [...draft.oos], prep: draft.prep, note: draft.note, del: draft.del }); toast('Storefront updated', 'ok'); }
       catch (e) { toast('Could not publish the change.', 'bad'); }
-    }, 500);
+    }, wait);
   }
 
   /* Delivery code check. Wrong codes are counted per order; after 5 the code entry is locked for 5 minutes (manual close stays available). */
@@ -1535,7 +1536,7 @@
     $('#rideBar').addEventListener('click', (e) => { if (e.target.closest('[data-ride-stop]')) { ride.ids.clear(); saveRide(); ensureWatch(); renderRide(); renderBoard(); } });
     $('#prepDec').addEventListener('click', () => { draft.prep = Math.max(1, draft.prep - 1); renderConfig(); pushConfig(); });
     $('#prepInc').addEventListener('click', () => { draft.prep = Math.min(180, draft.prep + 1); renderConfig(); pushConfig(); });
-    $('#noteInput').addEventListener('input', (e) => { draft.note = LH.clean(e.target.value, 120); pushConfig(); });
+    $('#noteInput').addEventListener('input', (e) => { draft.note = LH.clean(e.target.value, 120); pushConfig(600); });
     $('#menuAdmin').addEventListener('change', (e) => {
       const id = e.target.dataset.item;
       if (!id) return;
