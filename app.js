@@ -190,7 +190,8 @@
     }, 60000);
   }
 
-  const readDraft = () => { const c = LH.getCfg(); return { open: c.open, oos: new Set(c.oos), prep: c.prep, note: c.note, del: !!c.del }; };
+  // Sold-out marks for products no longer on the menu are dropped, so the count matches what customers see.
+  const readDraft = () => { const c = LH.getCfg(); return { open: c.open, oos: new Set(c.oos.filter((id) => ITEMS.has(id) && !ITEMS.get(id).gone)), prep: c.prep, note: c.note, del: !!c.del }; };
 
   /* ---------- Realtime events ---------- */
   LH.on('order', (o) => {
